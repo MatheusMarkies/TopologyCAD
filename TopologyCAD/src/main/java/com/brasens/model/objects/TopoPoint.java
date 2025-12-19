@@ -1,4 +1,4 @@
-package com.brasens.model;
+package com.brasens.model.objects;
 
 import lombok.*;
 

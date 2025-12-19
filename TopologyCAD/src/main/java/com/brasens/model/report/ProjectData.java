@@ -1,4 +1,4 @@
-package com.brasens.model;
+package com.brasens.model.report;
 
 import javafx.scene.image.Image;
 import lombok.Data;
