@@ -57,10 +57,8 @@ public class ProjectPropertiesDialog extends Dialog<Boolean> {
 
         this.getDialogPane().setContent(tabPane);
 
-        // Carrega os dados atuais nos campos
         loadCurrentData();
 
-        // Conversor de Resultado: Só salva se clicar em Salvar
         this.setResultConverter(dialogButton -> {
             if (dialogButton == btnSaveType) {
                 saveData();

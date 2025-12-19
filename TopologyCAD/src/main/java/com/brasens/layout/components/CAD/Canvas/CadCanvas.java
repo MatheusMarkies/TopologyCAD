@@ -251,19 +251,17 @@ public class CadCanvas extends Canvas {
             TopoPoint first = pts.get(0);
             TopoPoint last = pts.get(pts.size() - 1);
 
-            // Tolerância matemática fina (1mm) apenas para validação de dados
             if (Math.abs(first.getX() - last.getX()) < 0.001 &&
                     Math.abs(first.getY() - last.getY()) < 0.001) {
 
                 activePolyline.setClosed(true);
-                pts.remove(pts.size() - 1); // Remove o ponto duplicado se existir
+                pts.remove(pts.size() - 1);
             }
         }
     }
 
-    // Método auxiliar para comparar coordenadas com segurança
     private boolean isSamePoint(TopoPoint p1, TopoPoint p2) {
-        double tolerance = 0.001; // 1 milímetro de tolerância (ajuste se necessário)
+        double tolerance = 0.001;
         return Math.abs(p1.getX() - p2.getX()) < tolerance &&
                 Math.abs(p1.getY() - p2.getY()) < tolerance;
     }
@@ -271,12 +269,10 @@ public class CadCanvas extends Canvas {
     public void redraw() {
         GraphicsContext gc = getGraphicsContext2D();
 
-        // 1. Limpa Tela
         gc.setTransform(new Affine());
         gc.setFill(Color.rgb(30, 30, 30));
         gc.fillRect(0, 0, getWidth(), getHeight());
 
-        // 2. Aplica a matriz
         gc.setTransform(trans);
 
         drawGrid(gc);
@@ -289,9 +285,7 @@ public class CadCanvas extends Canvas {
 
         gc.setLineWidth(lineWidth);
 
-        // --- CAMADA 1: OBJETOS (LINHAS) ---
         for (TopoObject obj : objects) {
-            // Se for camada de TEXTO, não desenhamos linhas, pulamos para a próxima
             if ("TEXT".equals(obj.getLayerName())) continue;
 
             List<TopoPoint> pts = obj.getPoints();
@@ -312,7 +306,6 @@ public class CadCanvas extends Canvas {
             gc.stroke();
         }
 
-        // --- CAMADA 2: PREVIEW DA FERRAMENTA ---
         if ((functions.getFunctionSelected() == HandleFunctions.FunctionType.LINE
                 || functions.getFunctionSelected() == HandleFunctions.FunctionType.POLYLINE)
                 && functions.getTempStartPoint() != null
@@ -332,7 +325,6 @@ public class CadCanvas extends Canvas {
             gc.setLineDashes(null);
         }
 
-        // --- CAMADA 3: VÉRTICES E TEXTOS (LABEL) ---
         gc.setFont(javafx.scene.text.Font.font("Arial", fontSize));
 
         for (TopoObject obj : objects) {
@@ -343,24 +335,18 @@ public class CadCanvas extends Canvas {
                 double drawX = p.getX() - globalOffsetX;
                 double drawY = -(p.getY() - globalOffsetY);
 
-                // --- LÓGICA DIFERENCIADA ---
                 if (isTextLayer) {
-                    // MODO TEXTO (LABEL)
 
-                    // Se estiver selecionado, desenha uma caixinha ou cor diferente para indicar
                     if (p.isSelected()) {
                         gc.setFill(Color.ORANGERED);
                     } else {
                         gc.setFill(Color.WHITE);
                     }
 
-                    // Desenha APENAS o texto (Nome do ponto guarda o conteúdo)
                     if (p.getName() != null) {
                         gc.fillText(p.getName(), drawX, drawY);
                     }
 
-                    // Opcional: Desenha um pequeno "x" ou cruz apenas se estiver selecionado
-                    // para saber onde é o ponto de ancoragem
                     if (p.isSelected()) {
                         double crossSize = 3 / scale;
                         gc.setStroke(Color.ORANGERED);
@@ -370,7 +356,6 @@ public class CadCanvas extends Canvas {
                     }
 
                 } else {
-                    // MODO PONTO GEOMÉTRICO (BOLINHA + NOME)
                     if (p.isSelected()) {
                         gc.setFill(Color.ORANGERED);
                         double selSize = pointSize * 1.5;
@@ -416,7 +401,6 @@ public class CadCanvas extends Canvas {
         double scale = trans.getMxx();
 
         try {
-            // 1. Limites VISÍVEIS em Coordenadas RELATIVAS (baseado na câmera atual)
             javafx.geometry.Point2D p1 = trans.inverseTransform(0, 0);
             javafx.geometry.Point2D p2 = trans.inverseTransform(width, height);
 
@@ -425,18 +409,13 @@ public class CadCanvas extends Canvas {
             double minY_rel = Math.min(p1.getY(), p2.getY());
             double maxY_rel = Math.max(p1.getY(), p2.getY());
 
-            // 2. Converte para ABSOLUTAS (Mundo Real) para calcular onde as linhas caem (ex: 700.100, 700.200)
             double minX_abs = minX_rel + globalOffsetX;
             double maxX_abs = maxX_rel + globalOffsetX;
-            // Lembra que Y é invertido: Y_abs = -Y_rel + OffsetY.
-            // Mas para o grid, só queremos saber onde começam as linhas.
-            // Vamos simplificar e trabalhar com o offset visual direto no loop.
 
             double targetPixelSpacing = 100.0;
             double rawStep = targetPixelSpacing / scale;
             double step = calculateNiceStep(rawStep);
 
-            // Estilos
             double fontSize = 12 / scale;
             gc.setFont(javafx.scene.text.Font.font("Arial", fontSize));
             gc.setFill(Color.GRAY);
@@ -445,28 +424,17 @@ public class CadCanvas extends Canvas {
 
             double textOffset = 4 / scale;
 
-            // 3. Grid VERTICAL (Varia X)
-            // Começa no múltiplo de 'step' mais próximo dentro da visão ABSOLUTA
             double startX_abs = Math.floor(minX_abs / step) * step;
 
             for (double x_abs = startX_abs; x_abs <= maxX_abs; x_abs += step) {
-                // VOLTA para Relativo para desenhar
                 double drawX = x_abs - globalOffsetX;
 
-                // Desenha a linha vertical cobrindo toda a altura visível relativa
                 gc.strokeLine(drawX, minY_rel, drawX, maxY_rel);
 
-                // Texto (Usa coordenada absoluta)
                 String label = String.format("E %.0f", x_abs);
                 gc.fillText(label, drawX + textOffset, maxY_rel - (textOffset * 2));
             }
 
-            // 4. Grid HORIZONTAL (Varia Y)
-            // Aqui é chato por causa do Y invertido.
-            // minY_rel (topo visual, ex: -500) corresponde a uma coordenada Y_abs MAIOR (ex: 7.000.500)
-            // maxY_rel (fundo visual, ex: 500) corresponde a uma coordenada Y_abs MENOR (ex: 6.999.500)
-
-            // Calculamos Y Absoluto dos limites
             double y_abs_start = (-minY_rel) + globalOffsetY;
             double y_abs_end = (-maxY_rel) + globalOffsetY;
 
@@ -476,7 +444,6 @@ public class CadCanvas extends Canvas {
             double startY_abs = Math.floor(min_y_abs / step) * step;
 
             for (double y_abs = startY_abs; y_abs <= max_y_abs; y_abs += step) {
-                // VOLTA para Relativo para desenhar: relY = -(absY - OffsetY)
                 double drawY = -(y_abs - globalOffsetY);
 
                 gc.strokeLine(minX_rel, drawY, maxX_rel, drawY);

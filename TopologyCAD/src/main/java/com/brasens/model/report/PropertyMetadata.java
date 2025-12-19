@@ -18,8 +18,6 @@ public class PropertyMetadata {
     private String matricula;     // "MAT./TRANSC."
     private String codigoIncra;
 
-    // Estes valores geralmente vêm do cálculo do TopoObject,
-    // mas podem ser sobrescritos manualmente se necessário.
     private double areaHa;
     private double perimetroM;
 

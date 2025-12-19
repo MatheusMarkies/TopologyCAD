@@ -74,14 +74,10 @@ public class CustomButton extends StackPane {
         shadow.setOffsetY(2);
         this.setEffect(shadow);
 
-        // --- CORREÇÃO PRINCIPAL ---
-        // Adiciona um ouvinte: Sempre que 'backgroundColor' mudar, aplica o CSS
         backgroundColor.addListener((obs, oldColor, newColor) -> applyBackgroundCSS(newColor));
 
-        // Inicializa com a cor padrão
         backgroundColor.set(defaultColor);
 
-        // Lógica de Toggle ao Clicar
         this.setOnMouseClicked(e -> {
             if (isToggle) {
                 setActive(!isActive);
@@ -106,7 +102,6 @@ public class CustomButton extends StackPane {
         setAnimation(defaultColor, hoverColor, hoverColor, timer, false);
     }
 
-    // Método que converte a cor para CSS (Seguro contra Null/Preto)
     private void applyBackgroundCSS(Color c) {
         if (c == null) c = defaultColor;
 

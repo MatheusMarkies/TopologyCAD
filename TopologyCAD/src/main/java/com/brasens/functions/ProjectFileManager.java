@@ -18,7 +18,6 @@ import javafx.embed.swing.SwingFXUtils; // Requer módulo javafx.swing
 
 public class ProjectFileManager {
 
-    // Configura o GSON para lidar com JavaFX Image e LocalDate
     private static Gson createGson() {
         return new GsonBuilder()
                 .registerTypeAdapter(Image.class, new ImageAdapter())
@@ -41,7 +40,6 @@ public class ProjectFileManager {
         }
     }
 
-    // --- ADAPTADOR PARA SALVAR IMAGEM COMO TEXTO (BASE64) ---
     private static class ImageAdapter implements JsonSerializer<Image>, JsonDeserializer<Image> {
         @Override
         public JsonElement serialize(Image src, java.lang.reflect.Type typeOfSrc, JsonSerializationContext context) {
@@ -73,13 +71,11 @@ public class ProjectFileManager {
     private static class LocalDateAdapter implements JsonSerializer<LocalDate>, JsonDeserializer<LocalDate> {
         @Override
         public JsonElement serialize(LocalDate date, java.lang.reflect.Type typeOfSrc, JsonSerializationContext context) {
-            // Salva como Texto ISO (ex: "2025-12-18")
             return new JsonPrimitive(date.toString());
         }
 
         @Override
         public LocalDate deserialize(JsonElement json, java.lang.reflect.Type typeOfT, JsonDeserializationContext context) throws JsonParseException {
-            // Lê o texto e converte de volta para Objeto LocalDate
             if (json.isJsonNull() || json.getAsString().isEmpty()) return null;
             return LocalDate.parse(json.getAsString());
         }

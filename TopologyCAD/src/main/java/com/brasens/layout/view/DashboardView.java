@@ -546,8 +546,6 @@ public class DashboardView extends Page {
         );
         btnMapZoom.setOnMouseClicked(e -> getCadCanvas().zoomExtents());
 
-        // Botão Exemplo: Camadas (Layers) - Comum em Módulos de Mapa
-        // (Estou reusando o icone 'table-grid' como exemplo, troque por um 'layer.png' depois)
         CustomButton btnLayers = new CustomButton("",
                 new Image(CAD.class.getResource("/mspm/icons/table-grid.png").toString()),
                 "",
@@ -592,7 +590,7 @@ public class DashboardView extends Page {
         // --- BOTÃO IMPORTAR ---
         btnImport = new CustomButton("",
                 new Image(CAD.class.getResource("/mspm/icons/import.png").toString()),
-                "",
+                "",//
                 btnImageSize
         );
 
