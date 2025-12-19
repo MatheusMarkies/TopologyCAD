@@ -1,0 +1,26 @@
+.body{
+    -fx-background-color: #0e1424;
+}
+.card{
+    -fx-background-color: #FFFFFF;
+        -fx-background-radius: 6;
+        -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.2), 9, 0, 0, 0);
+        -fx-prompt-text-fill: derive(-fx-control-inner-background,-30%);
+}
+
+.button {
+    -fx-background-color: #e7e7e7;
+    -fx-background-radius: 4;
+}
+
+.scroll{
+-fx-background-color:transparent;
+}
+
+.badge{
+    -fx-background-color: rgba(0, 210, 120, 0.2);
+    -fx-padding: 1 3 1 3;
+        -fx-background-radius: 6;
+        -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.2), 5, 0, 0, 0);
+        -fx-prompt-text-fill: derive(-fx-control-inner-background,-30%);
+}

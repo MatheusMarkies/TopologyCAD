@@ -1,0 +1,41 @@
+.body{
+    -fx-background-color: #0e1424;
+}
+.card{
+    -fx-background-color: #FFFFFF;
+        -fx-background-radius: 6;
+         -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.3), 9, 0, 0, 0);
+        -fx-prompt-text-fill: derive(-fx-control-inner-background,-30%);
+}
+
+.button {
+    -fx-background-color: #e7e7e7;
+    -fx-background-radius: 4;
+}
+
+.scroll{
+-fx-background-color:transparent;
+}
+
+.input {
+    -fx-background-color: white;
+    -fx-border-color : #D7D6DC;
+    -fx-background-insets: -0.2, 1, -1.4, 3;
+    -fx-background-radius: 3;
+    -fx-padding: 4 7 4 15 ;
+    -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 1, 0, 0, 0);
+    -fx-prompt-text-fill: derive(-fx-control-inner-background,-30%);
+}
+
+.check-box .box {
+-fx-border-color: #0b1727;
+-fx-border-radius: 4px;
+}
+
+.check-box:selected .mark {
+-fx-background-color: white;
+}
+
+.check-box:selected .box {
+-fx-background-color: #0b1727;
+}
