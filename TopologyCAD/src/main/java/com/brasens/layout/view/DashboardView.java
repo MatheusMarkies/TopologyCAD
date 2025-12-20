@@ -26,6 +26,7 @@ import javafx.event.EventHandler;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.scene.control.*;
+import javafx.scene.effect.DropShadow;
 import javafx.scene.image.Image;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.*;
@@ -70,6 +71,12 @@ public class DashboardView extends Page {
     private ProjectData projectData;
     private PropertiesSidebar propertiesSidebar;
 
+    private VBox infoOverlay;
+    private Label lblInfoName;
+    private Label lblInfoX;
+    private Label lblInfoY;
+    private Label lblInfoZ;
+
     public DashboardView(ApplicationWindow applicationWindow, NetworkManager networkManager) {
         super(applicationWindow, networkManager, "/mspm/pages/DashboardCSS.css");
         this.controller = new DashboardController(applicationWindow);
@@ -112,13 +119,25 @@ public class DashboardView extends Page {
         canvasContainer.setStyle("-fx-background-color: #1e1e1e;"); // Fundo escuro do container
 
         cadCanvas = new CadCanvas(functions);
-        canvasContainer.getChildren().add(cadCanvas);
+        createInfoOverlay();
+
+
+        canvasContainer.getChildren().addAll(cadCanvas, infoOverlay);
 
         cadCanvas.widthProperty().bind(canvasContainer.widthProperty());
         cadCanvas.heightProperty().bind(canvasContainer.heightProperty());
 
         canvasContainer.widthProperty().addListener(o -> cadCanvas.redraw());
         canvasContainer.heightProperty().addListener(o -> cadCanvas.redraw());
+
+        cadCanvas.setOnSelectionChanged(point -> {
+            if (point == null) {
+                infoOverlay.setVisible(false);
+            } else {
+                updateInfoOverlay(point);
+                infoOverlay.setVisible(true);
+            }
+        });
 
         layout.setCenter(canvasContainer);
 
@@ -139,25 +158,104 @@ public class DashboardView extends Page {
         getChildren().add(contentAnchorPane);
     }
 
+    private void createInfoOverlay() {
+        infoOverlay = new VBox(5); // Espaçamento 5px
+        infoOverlay.setPadding(new Insets(10));
+
+        // Estilo "HUD": Fundo escuro semitransparente, bordas arredondadas
+        infoOverlay.setStyle(
+                "-fx-background-color: rgba(40, 40, 40, 0.85);" +
+                        "-fx-background-radius: 8;" +
+                        "-fx-border-color: #555;" +
+                        "-fx-border-radius: 8;" +
+                        "-fx-border-width: 1;"
+        );
+
+        // Sombra para destacar do fundo
+        infoOverlay.setEffect(new DropShadow(10, Color.BLACK));
+
+        // Posicionamento no canto superior esquerdo (dentro do Pane)
+        infoOverlay.setLayoutX(15);
+        infoOverlay.setLayoutY(15);
+
+        // Inicialmente invisível
+        infoOverlay.setVisible(false);
+        // Não captura cliques (para não atrapalhar o desenho se passar mouse por cima)
+        infoOverlay.setMouseTransparent(true);
+
+        // Labels
+        lblInfoName = createInfoLabel("", FontWeight.BOLD, Color.WHITE);
+        lblInfoX = createInfoLabel("", FontWeight.NORMAL, Color.LIGHTGRAY);
+        lblInfoY = createInfoLabel("", FontWeight.NORMAL, Color.LIGHTGRAY);
+        lblInfoZ = createInfoLabel("", FontWeight.NORMAL, Color.LIGHTGRAY);
+
+        infoOverlay.getChildren().addAll(lblInfoName, new Separator(), lblInfoX, lblInfoY, lblInfoZ);
+    }
+
+    private Label createInfoLabel(String text, FontWeight weight, Color color) {
+        Label lbl = new Label(text);
+        lbl.setFont(Font.font("Consolas", weight, 12)); // Fonte monoespaçada alinha melhor números
+        lbl.setTextFill(color);
+        return lbl;
+    }
+
+    private void updateInfoOverlay(TopoPoint p) {
+        lblInfoName.setText("Ponto: " + p.getName());
+        lblInfoX.setText(String.format("E (X): %.3f m", p.getX()));
+        lblInfoY.setText(String.format("N (Y): %.3f m", p.getY()));
+        lblInfoZ.setText(String.format("Alt(Z): %.3f m", p.getZ()));
+    }
+
     private void setupShortcuts() {
+        // Garante que o painel receba eventos de teclado
         this.setFocusTraversable(true);
 
         this.setOnKeyPressed(e -> {
             switch (e.getCode()) {
                 case ESCAPE -> {
-                    if (controller instanceof DashboardController dashCtrl) {
-
-                    }
-
                     functions.cancelOperation(cadCanvas);
                     deselectAllButtons();
                 }
                 case DELETE -> {
+                    cadCanvas.deleteSelected();
+
+                    updateCoordinatesTable(cadCanvas.getAllPoints());
+                }
+                case T -> {
+                    editSelectedText();
                 }
             }
         });
 
         this.setOnMouseClicked(e -> this.requestFocus());
+    }
+
+    private void editSelectedText() {
+        TopoPoint textPoint = cadCanvas.getSingleSelectedTextPoint();
+
+        if (textPoint == null) {
+            return;
+        }
+
+        TextInputDialog dialog = new TextInputDialog(textPoint.getName());
+        dialog.setTitle("Editar Texto");
+        dialog.setHeaderText("Editar conteúdo do texto selecionado");
+        dialog.setContentText("Novo texto:");
+
+        dialog.getDialogPane().lookupButton(ButtonType.OK).disableProperty().bind(
+                dialog.getEditor().textProperty().isEmpty()
+        );
+
+        Optional<String> result = dialog.showAndWait();
+
+        result.ifPresent(newText -> {
+            if (!newText.isEmpty()) {
+                textPoint.setName(newText);
+                cadCanvas.redraw();
+
+                System.out.println("Texto alterado para: " + newText);
+            }
+        });
     }
 
     private void deselectAllButtons() {
@@ -657,6 +755,30 @@ public class DashboardView extends Page {
         return toolBar;
     }
 
+    private void handleImportPointsFile(){
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Importar Pontos Topográficos");
+        fileChooser.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("Arquivos de Texto", "*.txt", "*.csv")
+        );
+
+        File file = fileChooser.showOpenDialog(getScene().getWindow());
+
+        if (file != null) {
+            try {
+                List<TopoPoint> pontosImportados = PointImporter.importFromCSV(file);
+                System.out.println("Importados " + pontosImportados.size() + " pontos.");
+
+                getCadCanvas().setImportedPoints(pontosImportados);
+                updateCoordinatesTable(getCadCanvas().getAllPoints());
+
+            } catch (Exception ex) {
+                ex.printStackTrace();
+                showAlert("Erro na Importação", ex.getMessage());
+            }
+        }
+    }
+
     private ToolBar createMainToolBar() {
         ToolBar toolBar = new ToolBar();
 
@@ -684,28 +806,14 @@ public class DashboardView extends Page {
         btnImport.setOnMouseClicked(new EventHandler<MouseEvent>() {
             @Override
             public void handle(MouseEvent event) {
-                FileChooser fileChooser = new FileChooser();
-                fileChooser.setTitle("Importar Pontos Topográficos");
-                fileChooser.getExtensionFilters().add(
-                        new FileChooser.ExtensionFilter("Arquivos de Texto", "*.txt", "*.csv")
-                );
+                handleImportPointsFile();
+            }
+        });
 
-                File file = fileChooser.showOpenDialog(getScene().getWindow());
-
-                if (file != null) {
-                    try {
-                        List<TopoPoint> pontos = PointImporter.importFromCSV(file);
-                        System.out.println("Importados " + pontos.size() + " pontos.");
-
-                        List<TopoPoint> importedPoints = PointImporter.importFromCSV(file);
-                        updateCoordinatesTable(importedPoints);
-
-                        getCadCanvas().setImportedPoints(pontos);
-
-                    } catch (Exception ex) {
-                        ex.printStackTrace();
-                    }
-                }
+        btnImport.setOnMouseClicked(new EventHandler<MouseEvent>() {
+            @Override
+            public void handle(MouseEvent event) {
+                handleImportPointsFile();
             }
         });
 

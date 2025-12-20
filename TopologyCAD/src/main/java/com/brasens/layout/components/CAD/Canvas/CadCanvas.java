@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -33,8 +34,18 @@ public class CadCanvas extends Canvas {
     private final List<TopoObject> objects = new ArrayList<>();
     private TopoObject activePolyline = null;
 
+    @Setter
+    private Runnable onContentChange;
+
+    @Setter
+    private Consumer<TopoPoint> onSelectionChanged;
+
     private double globalOffsetX = 0;
     private double globalOffsetY = 0;
+
+    private double startDragX, startDragY;
+    private boolean isDraggingConfirmed = false;
+    private final double DRAG_THRESHOLD = 5.0;
 
     public CadCanvas(HandleFunctions functions) {
         super(100, 100);
@@ -476,6 +487,58 @@ public class CadCanvas extends Canvas {
         return null; // Nenhum ponto encontrado perto
     }
 
+    public TopoPoint getSingleSelectedTextPoint() {
+        TopoPoint selected = null;
+        int count = 0;
+
+        for (TopoObject obj : objects) {
+            if ("TEXT".equals(obj.getLayerName())) {
+                for (TopoPoint p : obj.getPoints()) {
+                    if (p.isSelected()) {
+                        selected = p;
+                        count++;
+                    }
+                }
+            }
+        }
+
+        if (count == 1) {
+            return selected;
+        }
+
+        return null;
+    }
+
+    public void deleteSelected() {
+        if (objects.isEmpty()) return;
+
+        List<TopoObject> objectsToRemove = new ArrayList<>();
+        boolean somethingChanged = false;
+
+        for (TopoObject obj : objects) {
+            boolean removed = obj.getPoints().removeIf(TopoPoint::isSelected);
+
+            if (removed) {
+                somethingChanged = true;
+            }
+
+            if (obj.getPoints().isEmpty()) {
+                objectsToRemove.add(obj);
+            } else if (!"TEXT".equals(obj.getLayerName()) && obj.getPoints().size() < 2) {
+                objectsToRemove.add(obj);
+            }
+        }
+
+        if (somethingChanged) {
+            objects.removeAll(objectsToRemove);
+
+            if (onContentChange != null) onContentChange.run();
+            if (onSelectionChanged != null) onSelectionChanged.accept(null);
+            redraw();
+            System.out.println("Itens deletados.");
+        }
+    }
+
     public void clearSelection() {
         for (TopoObject obj : objects) {
             for (TopoPoint p : obj.getPoints()) {
@@ -556,8 +619,38 @@ public class CadCanvas extends Canvas {
         functions.updateMousePosition(e.getX(), e.getY());
         functions.startDrag();
 
-        double dTime = (System.nanoTime() - clickTime) / 1e6;
+        startDragX = e.getX();
+        startDragY = e.getY();
+        isDraggingConfirmed = false;
 
+        TopoPoint hitPoint = findPointNear(e.getX(), e.getY(), 10.0);
+
+        if (functions.getFunctionSelected() == HandleFunctions.FunctionType.NONE) {
+            if (hitPoint != null) {
+                functions.setPointBeingDragged(hitPoint);
+
+                if (!hitPoint.isSelected()) {
+                    clearSelection();
+                    hitPoint.setSelected(true);
+                }
+
+                if (onSelectionChanged != null) {
+                    onSelectionChanged.accept(hitPoint);
+                }
+
+                redraw();
+                return;
+            } else {
+                clearSelection();
+                redraw();
+
+                if (onSelectionChanged != null) {
+                    onSelectionChanged.accept(null);
+                }
+            }
+        }
+
+        double dTime = (System.nanoTime() - clickTime) / 1e6;
         clickTime = System.nanoTime();
 
         if (dTime < 250) {
@@ -569,11 +662,45 @@ public class CadCanvas extends Canvas {
     }
 
     private void handleMouseReleased(MouseEvent e) {
+        if (functions.getPointBeingDragged() != null) {
+            System.out.println("Moveu ponto para: " + functions.getPointBeingDragged().getX() + ", " + functions.getPointBeingDragged().getY());
+
+            if (onContentChange != null) onContentChange.run();
+
+            functions.setPointBeingDragged(null);
+        }
+
         functions.stopDrag();
     }
 
     private void handleMouseDragged(MouseEvent e) {
         functions.updateMousePosition(e.getX(), e.getY());
+
+        if (functions.getPointBeingDragged() != null && functions.getFunctionSelected() == HandleFunctions.FunctionType.NONE) {
+            Vector2D worldPos = screenToWorld(e.getX(), e.getY());
+
+            if (!isDraggingConfirmed) {
+                double deltaX = e.getX() - startDragX;
+                double deltaY = e.getY() - startDragY;
+                double distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+                if (distance < DRAG_THRESHOLD) {
+                    return;
+                } else {
+                    isDraggingConfirmed = true;
+                }
+            }
+
+            functions.getPointBeingDragged().setX(worldPos.x());
+            functions.getPointBeingDragged().setY(worldPos.y());
+
+            if (onSelectionChanged != null) {
+                onSelectionChanged.accept(functions.getPointBeingDragged());
+            }
+
+            redraw();
+            return;
+        }
 
         if (e.getButton() == MouseButton.MIDDLE || e.getButton() == MouseButton.PRIMARY) {
             double dx = e.getX() - lastMouseX;
@@ -585,10 +712,10 @@ public class CadCanvas extends Canvas {
             } catch (Exception ex) {
                 ex.printStackTrace();
             }
-
-            lastMouseX = e.getX();
-            lastMouseY = e.getY();
         }
+
+        lastMouseX = e.getX();
+        lastMouseY = e.getY();
     }
 
     private void handleScroll(ScrollEvent e) {
@@ -624,5 +751,13 @@ public class CadCanvas extends Canvas {
     @Override
     public double prefHeight(double width) {
         return getHeight();
+    }
+
+    public List<TopoPoint> getAllPoints() {
+        List<TopoPoint> all = new ArrayList<>();
+        for(TopoObject obj : objects) {
+            all.addAll(obj.getPoints());
+        }
+        return all;
     }
 }

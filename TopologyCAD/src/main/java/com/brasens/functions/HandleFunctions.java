@@ -40,6 +40,8 @@ public class HandleFunctions {
     private TopoPoint tempStartPoint = null;
     private TopoPoint tempEndPoint = null;
 
+    private TopoPoint pointBeingDragged = null;
+
     public void setFunction(FunctionType type) {
         this.functionSelected = type;
         this.tempStartPoint = null;
@@ -111,15 +113,15 @@ public class HandleFunctions {
 
     public void cancelOperation(CadCanvas canvasReference) {
         this.functionSelected = FunctionType.NONE;
-
         this.tempStartPoint = null;
         this.tempEndPoint = null;
 
+        // NOVO: Solta o ponto se estiver arrastando
+        this.pointBeingDragged = null;
+
         stopDrag();
         canvasReference.finishPolyLine();
-
         canvasReference.clearSelection();
-
         canvasReference.redraw();
 
         System.out.println("Operação cancelada (ESC).");
