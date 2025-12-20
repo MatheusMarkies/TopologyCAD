@@ -16,6 +16,7 @@ import com.brasens.model.io.ProjectSaveState;
 import com.brasens.model.report.ProjectData;
 import com.brasens.model.objects.TopoObject;
 import com.brasens.model.objects.TopoPoint;
+import com.brasens.utilities.math.ContourGenerator;
 import com.brasens.utilities.math.CoordinateConversion;
 import com.brasens.utilities.math.TopologyMath;
 import com.brasens.utils.Page;
@@ -25,6 +26,7 @@ import javafx.collections.ObservableList;
 import javafx.event.EventHandler;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
+import javafx.geometry.Side;
 import javafx.scene.control.*;
 import javafx.scene.effect.DropShadow;
 import javafx.scene.image.Image;
@@ -60,6 +62,8 @@ public class DashboardView extends Page {
     private CustomButton btnUIText;
     private CustomButton btnZoomExtents;
     private CustomButton btnShowCoordenatesTable;
+    private CustomButton btnLayers;
+    private CustomButton btnContour;
     BorderPane layout = new BorderPane();
 
     private VBox sidebarPane;
@@ -755,6 +759,66 @@ public class DashboardView extends Page {
         return toolBar;
     }
 
+    private void handleShowLayers(){
+        ContextMenu layerMenu = new ContextMenu();
+
+        CheckMenuItem itemMestra = new CheckMenuItem("Curvas Mestras (Cotas)");
+        itemMestra.setSelected(cadCanvas.isLayerVisible("CURVA_MESTRA"));
+        itemMestra.setOnAction(ev -> cadCanvas.setLayerVisible("CURVA_MESTRA", itemMestra.isSelected()));
+
+        CheckMenuItem itemNormal = new CheckMenuItem("Curvas Intermediárias");
+        itemNormal.setSelected(cadCanvas.isLayerVisible("CURVA_NORMAL"));
+        itemNormal.setOnAction(ev -> cadCanvas.setLayerVisible("CURVA_NORMAL", itemNormal.isSelected()));
+
+        CheckMenuItem itemDefault = new CheckMenuItem("Pontos & Perímetro");
+        itemDefault.setSelected(cadCanvas.isLayerVisible("DEFAULT"));
+        itemDefault.setOnAction(ev -> cadCanvas.setLayerVisible("DEFAULT", itemDefault.isSelected()));
+
+        CheckMenuItem itemText = new CheckMenuItem("Textos");
+        itemText.setSelected(cadCanvas.isLayerVisible("TEXT"));
+        itemText.setOnAction(ev -> cadCanvas.setLayerVisible("TEXT", itemText.isSelected()));
+
+        layerMenu.getItems().addAll(itemMestra, itemNormal, new SeparatorMenuItem(), itemDefault, itemText);
+
+        layerMenu.show(btnLayers, Side.BOTTOM, 0, 0);
+    }
+
+    private void handleCreateContourCurves() {
+        TextInputDialog dialog = new TextInputDialog("1.0");
+        dialog.setTitle("Gerar Curvas de Nível");
+        dialog.setHeaderText("Altimetria Automática (TIN)");
+        dialog.setContentText("Digite a Equidistância Vertical (m):");
+
+        dialog.showAndWait().ifPresent(intervalStr -> {
+            try {
+                double interval = Double.parseDouble(intervalStr.replace(",", "."));
+
+                List<TopoPoint> allPoints = cadCanvas.getAllPoints();
+
+                if (allPoints.size() < 3) {
+                    showAlert("Dados Insuficientes", "São necessários pelo menos 3 pontos com cota para triangular.");
+                    return;
+                }
+
+                System.out.println("Iniciando triangulação e curvas com intervalo: " + interval);
+
+                List<TopoObject> curvas = ContourGenerator.generateContours(allPoints, interval);
+
+                if (curvas.isEmpty()) {
+                    showAlert("Aviso", "Nenhuma curva gerada. Verifique se os pontos têm variação de cota Z.");
+                } else {
+                    cadCanvas.getObjects().addAll(curvas);
+                    cadCanvas.redraw();
+
+                    System.out.println("Sucesso: " + curvas.size() + " segmentos gerados.");
+                }
+
+            } catch (NumberFormatException ex) {
+                showAlert("Erro", "Número inválido. Use ponto para decimais (ex: 0.5).");
+            }
+        });
+    }
+
     private void handleImportPointsFile(){
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("Importar Pontos Topográficos");
@@ -904,19 +968,40 @@ public class DashboardView extends Page {
         });
         btnShowCoordenatesTable.setActive(true);
 
-        // Adiciona tudo na barra com separadores
+        btnLayers = new CustomButton("",
+                new Image(CAD.class.getResource("/mspm/icons/layers.png").toString()), // Use um ícone de "folhas sobrepostas"
+                "",
+                btnImageSize
+        );
+        btnLayers.setAnimation(colorDefault, colorHover, colorActive, 200, true); // Toggle button
+
+        btnLayers.setOnMouseClicked(e -> {
+            handleShowLayers();
+        });
+
+        btnContour = new CustomButton("",
+                new Image(CAD.class.getResource("/mspm/icons/contour.png").toString()), // Use um ícone adequado
+                "",
+                btnImageSize
+        );
+        btnContour.setAnimation(colorDefault, colorHover, colorActive, 200, false);
+
+        btnContour.setOnMouseClicked(e -> {
+            handleCreateContourCurves();
+            });
+
         toolBar.getItems().addAll(
                 btnImport,
                 btnSave,
                 new Separator(Orientation.VERTICAL),
                 btnPan,
-                btnZoomExtents, // Zoom fica perto do Pan por lógica
+                btnZoomExtents,
                 new Separator(Orientation.VERTICAL),
                 btnLine,
                 btnPolyline,
                 btnUIText,
                 new Separator(Orientation.VERTICAL),
-                btnShowCoordenatesTable
+                btnShowCoordenatesTable, btnLayers, btnContour
         );
 
         return toolBar;

@@ -21,7 +21,10 @@ public enum TopoLineType {
     // Viário
     ESTRADA("Estrada", Color.RED, 3.0, null), // Linha grossa
     RODOVIA("Rodovia", Color.ORANGERED, 4.0, null),
-    FERROVIA("Ferrovia", Color.DARKRED, 2.0, new double[]{20, 5, 5, 5}); // Traço, ponto, traço
+    FERROVIA("Ferrovia", Color.DARKRED, 2.0, new double[]{20, 5, 5, 5}), // Traço, ponto, traço
+
+    CURVA_MESTRA("Curva Mestra", Color.ORANGE, 1.5, null), // A cada 5m (mais grossa)
+    CURVA_INTERMEDIARIA("Curva Intermediária", Color.DARKGRAY, 0.8, null); // De 1 em 1m (fina)
 
     private final String label;
     private final Color color;

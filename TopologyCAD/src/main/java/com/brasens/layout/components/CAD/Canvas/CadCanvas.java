@@ -19,10 +19,7 @@ import javafx.scene.transform.NonInvertibleTransformException;
 import lombok.Getter;
 import lombok.Setter;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -52,6 +49,8 @@ public class CadCanvas extends Canvas {
 
     private ContextMenu contextMenu;
 
+    private final Map<String, Boolean> layerVisibility = new HashMap<>();
+
     public CadCanvas(HandleFunctions functions) {
         super(100, 100);
         this.functions = functions;
@@ -65,6 +64,12 @@ public class CadCanvas extends Canvas {
             functions.updateMousePosition(e.getX(), e.getY());
             functions.handleMouseMove(new Vector2D(e.getX(), e.getY()), this);
         });
+
+        layerVisibility.put("DEFAULT", true);
+        layerVisibility.put("TEXT", true);
+        layerVisibility.put("CURVA_MESTRA", true);
+        layerVisibility.put("CURVA_NORMAL", true);
+        layerVisibility.put("TRIANGULACAO", false);
 
         functions.setEdgePanTimer(new AnimationTimer() {
             @Override
@@ -282,13 +287,24 @@ public class CadCanvas extends Canvas {
                 Math.abs(p1.getY() - p2.getY()) < tolerance;
     }
 
+    public void setLayerVisible(String layerName, boolean visible) {
+        layerVisibility.put(layerName, visible);
+        redraw();
+    }
+
+    public boolean isLayerVisible(String layerName) {
+        return layerVisibility.getOrDefault(layerName, true);
+    }
+
     public void redraw() {
         GraphicsContext gc = getGraphicsContext2D();
 
+        // 1. Limpa a tela
         gc.setTransform(new Affine());
         gc.setFill(Color.rgb(30, 30, 30));
         gc.fillRect(0, 0, getWidth(), getHeight());
 
+        // 2. Aplica Transformação (Zoom/Pan)
         gc.setTransform(trans);
 
         drawGrid(gc);
@@ -298,7 +314,12 @@ public class CadCanvas extends Canvas {
         double fontSize = 12 / scale;
         double textOffset = 8 / scale;
 
+        // --- LOOP 1: DESENHO DAS LINHAS E GEOMETRIAS ---
         for (TopoObject obj : objects) {
+            // Verifica se a camada está visível
+            if (!isLayerVisible(obj.getLayerName())) continue;
+
+            // Ignora textos nesta passada (desenha por último para ficar por cima)
             if ("TEXT".equals(obj.getLayerName())) continue;
 
             List<TopoPoint> pts = obj.getPoints();
@@ -306,8 +327,12 @@ public class CadCanvas extends Canvas {
 
             TopoLineType style = obj.getType();
 
+            // Verifica se é uma curva de nível
+            boolean isContour = (style == TopoLineType.CURVA_MESTRA || style == TopoLineType.CURVA_INTERMEDIARIA);
+
             boolean isSelected = isObjectSelected(obj);
 
+            // Configura Cor e Espessura
             if (isSelected) {
                 gc.setStroke(Color.ORANGERED);
                 gc.setLineWidth((style.getWidth() + 1.5) / scale);
@@ -316,20 +341,20 @@ public class CadCanvas extends Canvas {
                 gc.setLineWidth(style.getWidth() / scale);
             }
 
+            // Configura Tracejado (Dashes)
             if (style.getDashArray() != null) {
                 double[] originalDashes = style.getDashArray();
                 double[] scaledDashes = new double[originalDashes.length];
-
                 for (int i = 0; i < originalDashes.length; i++) {
                     scaledDashes[i] = originalDashes[i] / scale;
                 }
                 gc.setLineDashes(scaledDashes);
             } else {
-                gc.setLineDashes(null); // Linha sólida
+                gc.setLineDashes(null);
             }
 
+            // Desenha a Linha
             gc.beginPath();
-
             TopoPoint p0 = pts.get(0);
             gc.moveTo(p0.getX() - globalOffsetX, -(p0.getY() - globalOffsetY));
 
@@ -340,10 +365,30 @@ public class CadCanvas extends Canvas {
 
             if (obj.isClosed()) gc.closePath();
             gc.stroke();
+            gc.setLineDashes(null); // Reseta para o próximo
 
-            gc.setLineDashes(null);
+            // --- NOVO: Desenhar Rótulo da Cota (Apenas Curvas Mestras) ---
+            if (style == TopoLineType.CURVA_MESTRA && pts.size() >= 2) {
+                TopoPoint p1 = pts.get(0);
+                TopoPoint p2 = pts.get(1); // Usa o primeiro segmento para posicionar
+
+                // Calcula o ponto médio do segmento
+                double midX = (p1.getX() + p2.getX()) / 2.0;
+                double midY = (p1.getY() + p2.getY()) / 2.0;
+
+                // Prepara o texto
+                gc.setFill(style.getColor()); // Mesma cor da linha
+                gc.setFont(javafx.scene.text.Font.font("Arial", javafx.scene.text.FontWeight.BOLD, fontSize));
+
+                // Desenha o valor de Z (altura)
+                // Ajustamos coordenadas para o canvas
+                gc.fillText(String.format("%.0f", p1.getZ()),
+                        midX - globalOffsetX,
+                        -(midY - globalOffsetY));
+            }
         }
 
+        // --- PREVIEW DA LINHA ELÁSTICA (FERRAMENTA ATIVA) ---
         if ((functions.getFunctionSelected() == HandleFunctions.FunctionType.LINE
                 || functions.getFunctionSelected() == HandleFunctions.FunctionType.POLYLINE)
                 && functions.getTempStartPoint() != null
@@ -366,7 +411,11 @@ public class CadCanvas extends Canvas {
         gc.setFont(javafx.scene.text.Font.font("Arial", fontSize));
 
         for (TopoObject obj : objects) {
+            if (!isLayerVisible(obj.getLayerName())) continue;
+
             boolean isTextLayer = "TEXT".equals(obj.getLayerName());
+            TopoLineType style = obj.getType();
+            boolean isContour = (style == TopoLineType.CURVA_MESTRA || style == TopoLineType.CURVA_INTERMEDIARIA);
 
             for (TopoPoint p : obj.getPoints()) {
                 double drawX = p.getX() - globalOffsetX;
@@ -392,6 +441,16 @@ public class CadCanvas extends Canvas {
                     }
 
                 } else {
+
+                    if (isContour) {
+                        if (p.isSelected()) {
+                            gc.setFill(Color.ORANGERED);
+                            double selSize = pointSize * 1.5;
+                            gc.fillOval(drawX - selSize / 2, drawY - selSize / 2, selSize, selSize);
+                        }
+                        continue;
+                    }
+
                     if (p.isSelected()) {
                         gc.setFill(Color.ORANGERED);
                         double selSize = pointSize * 1.5;
@@ -403,11 +462,21 @@ public class CadCanvas extends Canvas {
 
                     gc.setFill(Color.WHITE);
                     if (p.getName() != null && !p.getName().isEmpty()) {
-                        gc.fillText(p.getName(), drawX + textOffset, drawY - textOffset);
+                        if (!p.getName().startsWith("INT")) {
+                            gc.fillText(p.getName(), drawX + textOffset, drawY - textOffset);
+                        }
                     }
                 }
             }
         }
+    }
+
+    private void drawSelectionCross(GraphicsContext gc, double x, double y, double scale) {
+        double s = 3 / scale;
+        gc.setStroke(Color.ORANGERED);
+        gc.setLineWidth(1/scale);
+        gc.strokeLine(x-s, y-s, x+s, y+s);
+        gc.strokeLine(x-s, y+s, x+s, y-s);
     }
 
     private boolean isObjectSelected(TopoObject obj) {

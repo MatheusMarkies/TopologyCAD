@@ -8,6 +8,7 @@ import javafx.animation.Timeline;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.geometry.Pos;
+import javafx.scene.CacheHint;
 import javafx.scene.Cursor;
 import javafx.scene.control.Label;
 import javafx.scene.effect.DropShadow;
@@ -39,7 +40,7 @@ public class CustomButton extends StackPane {
     private Color hoverColor = Color.web("#3f3f3f");
     private Color activeColor = Color.web("#0078D7");
 
-    private float animTimer = 200;
+    private float animTimer = 50;
 
     public CustomButton(String text, Image image, String style, int imageSize){
         // 1. Configuração Visual (Icone e Texto)
@@ -48,6 +49,9 @@ public class CustomButton extends StackPane {
         buttonLabelImageView.setFitWidth(imageSize);
         buttonLabelImageView.setPreserveRatio(true);
         buttonLabelImageView.setSmooth(true);
+
+        //buttonLabelImageView.setCache(true);
+        //buttonLabelImageView.setCacheHint(CacheHint.QUALITY);
 
         buttonLabel = new Label(text);
         buttonLabel.setTextFill(Color.WHITE);
