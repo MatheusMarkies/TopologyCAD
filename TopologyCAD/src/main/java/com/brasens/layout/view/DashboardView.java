@@ -778,7 +778,12 @@ public class DashboardView extends Page {
         itemText.setSelected(cadCanvas.isLayerVisible("TEXT"));
         itemText.setOnAction(ev -> cadCanvas.setLayerVisible("TEXT", itemText.isSelected()));
 
-        layerMenu.getItems().addAll(itemMestra, itemNormal, new SeparatorMenuItem(), itemDefault, itemText);
+        CheckMenuItem itemCompass = new CheckMenuItem("Rosa dos Ventos");
+        itemCompass.setSelected(cadCanvas.isLayerVisible("ROSA_VENTOS"));
+        itemCompass.setOnAction(ev -> cadCanvas.setLayerVisible("ROSA_VENTOS", itemCompass.isSelected()));
+
+        layerMenu.getItems().addAll(itemMestra, itemNormal, new SeparatorMenuItem(), itemDefault, itemText,new SeparatorMenuItem(),
+                itemCompass);
 
         layerMenu.show(btnLayers, Side.BOTTOM, 0, 0);
     }
