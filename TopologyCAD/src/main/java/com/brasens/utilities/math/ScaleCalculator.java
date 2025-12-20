@@ -1,4 +1,4 @@
-package com.brasens.utils;
+package com.brasens.utilities.math;
 
 import com.brasens.model.objects.TopoObject;
 import com.brasens.model.objects.TopoPoint;

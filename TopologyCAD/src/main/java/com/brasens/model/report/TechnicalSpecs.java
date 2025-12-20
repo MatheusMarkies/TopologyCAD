@@ -19,6 +19,9 @@ public class TechnicalSpecs {
     private String meridianoCentral;   // Ex: "45º WGR"
     private String equipamento;        // Ex: "GPS GNSS CHC - i80"
 
+    private int zonaUTM = 23; // Padrão SP/RJ
+    private boolean hemisferioSul = true; // Padrão Brasil
+
     // Dados do Desenho
     private String tituloDesenho;      // Ex: "Planialtimétrico Para Estudo"
     private String escalaTexto;        // Ex: "1 / 1800"

@@ -16,8 +16,10 @@ import com.brasens.model.io.ProjectSaveState;
 import com.brasens.model.report.ProjectData;
 import com.brasens.model.objects.TopoObject;
 import com.brasens.model.objects.TopoPoint;
+import com.brasens.utilities.math.CoordinateConversion;
+import com.brasens.utilities.math.TopologyMath;
 import com.brasens.utils.Page;
-import com.brasens.utils.ScaleCalculator;
+import com.brasens.utilities.math.ScaleCalculator;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.event.EventHandler;
@@ -30,6 +32,7 @@ import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
+import javafx.scene.text.Text;
 import javafx.stage.FileChooser;
 import lombok.Getter;
 import lombok.Setter;
@@ -199,27 +202,60 @@ public class DashboardView extends Page {
     private TableView<CoordinateRow> createTable() {
         TableView<CoordinateRow> table = new TableView<>();
 
+        // --- Colunas Originais ---
         TableColumn<CoordinateRow, String> colDe = new TableColumn<>("De");
         colDe.setCellValueFactory(data -> data.getValue().deProperty());
-        colDe.setPrefWidth(50);
+        colDe.setPrefWidth(40);
 
         TableColumn<CoordinateRow, String> colPara = new TableColumn<>("Para");
         colPara.setCellValueFactory(data -> data.getValue().paraProperty());
-        colPara.setPrefWidth(50);
+        colPara.setPrefWidth(40);
 
         TableColumn<CoordinateRow, String> colN = new TableColumn<>("Norte (Y)");
         colN.setCellValueFactory(data -> data.getValue().coordNProperty());
-        colN.setPrefWidth(80);
+        colN.setPrefWidth(85);
 
         TableColumn<CoordinateRow, String> colE = new TableColumn<>("Este (X)");
         colE.setCellValueFactory(data -> data.getValue().coordEProperty());
-        colE.setPrefWidth(80);
+        colE.setPrefWidth(85);
 
+        // Altitude (Z)
+        TableColumn<CoordinateRow, String> colZ = new TableColumn<>("Cota Z");
+        colZ.setCellValueFactory(data -> data.getValue().coordZProperty());
+        colZ.setPrefWidth(60);
+
+        // Distância
         TableColumn<CoordinateRow, String> colDist = new TableColumn<>("Distância");
         colDist.setCellValueFactory(data -> data.getValue().distanciaProperty());
-        colDist.setPrefWidth(80);
+        colDist.setPrefWidth(70);
 
-        table.getColumns().addAll(colDe, colPara, colN, colE, colDist);
+        // Azimute
+        TableColumn<CoordinateRow, String> colAz = new TableColumn<>("Azimute");
+        colAz.setCellValueFactory(data -> data.getValue().azimuteProperty());
+        colAz.setPrefWidth(90); // Mais largo para caber graus/min/seg
+
+        // Rumo
+        TableColumn<CoordinateRow, String> colRumo = new TableColumn<>("Rumo");
+        colRumo.setCellValueFactory(data -> data.getValue().rumoProperty());
+        colRumo.setPrefWidth(80);
+
+        // Latitude
+        TableColumn<CoordinateRow, String> colLat = new TableColumn<>("Latitude");
+        colLat.setCellValueFactory(data -> data.getValue().latitudeProperty());
+        colLat.setPrefWidth(90);
+
+        // Longitude
+        TableColumn<CoordinateRow, String> colLon = new TableColumn<>("Longitude");
+        colLon.setCellValueFactory(data -> data.getValue().longitudeProperty());
+        colLon.setPrefWidth(90);
+
+        table.getColumns().addAll(
+                colDe, colPara,
+                colN, colE, colZ,
+                colDist, colAz, colRumo,
+                colLat, colLon
+        );
+
         return table;
     }
 
@@ -273,23 +309,74 @@ public class DashboardView extends Page {
         return card;
     }
 
+    private void autoResizeColumns(TableView<?> table) {
+        table.setColumnResizePolicy(TableView.UNCONSTRAINED_RESIZE_POLICY);
+
+        table.getColumns().forEach(column -> {
+            Text t = new Text(column.getText());
+            double max = t.getLayoutBounds().getWidth();
+
+            int limit = Math.min(table.getItems().size(), 500);
+
+            for (int i = 0; i < limit; i++) {
+                if (column.getCellData(i) != null) {
+                    t = new Text(column.getCellData(i).toString());
+                    double calcwidth = t.getLayoutBounds().getWidth();
+                    if (calcwidth > max) {
+                        max = calcwidth;
+                    }
+                }
+            }
+            column.setPrefWidth(max + 15.0d);
+        });
+    }
+
     public void updateCoordinatesTable(List<TopoPoint> points) {
         ObservableList<CoordinateRow> rows = FXCollections.observableArrayList();
 
-        if (points.size() < 2) {
+        // Se tiver menos de 2 pontos, limpa tudo
+        if (points == null || points.size() < 2) {
             coordinateTableView.setItems(rows);
             lblAreaValue.setText("0.0000 ha");
             lblPerimeterValue.setText("0.00 m");
             return;
         }
 
+        int zonaUtm = projectData.getTechnicalSpecs().getZonaUTM();
+        boolean isSul = projectData.getTechnicalSpecs().isHemisferioSul();
+
         for (int i = 0; i < points.size(); i++) {
             TopoPoint current = points.get(i);
             TopoPoint next = points.get((i + 1) % points.size());
-            double dist = Math.hypot(next.getX() - current.getX(), next.getY() - current.getY());
 
-            rows.add(new CoordinateRow(current.getName(), next.getName(), current.getY(), current.getX(), dist));
+            double dist = TopologyMath.getDistance2D(current, next);
+            double azimuteVal = TopologyMath.getAzimuth(current, next);
+
+            String azimuteStr = TopologyMath.degreesToDMS(azimuteVal);
+            String rumoStr = TopologyMath.getRumo(azimuteVal);
+
+            double[] latLon = CoordinateConversion.utmToLatLon(current.getX(), current.getY(), zonaUtm, isSul);
+
+            String latFormatada = TopologyMath.formatLatitude(latLon[0]);
+            String lonFormatada = TopologyMath.formatLongitude(latLon[1]);
+
+            current.setLatitude(latLon[0]);
+            current.setLongitude(latLon[1]);
+
+            rows.add(new CoordinateRow(
+                    current.getName(),
+                    next.getName(),
+                    current.getY(),
+                    current.getX(),
+                    current.getZ(),
+                    dist,
+                    azimuteStr,
+                    rumoStr,
+                    latFormatada,
+                    lonFormatada
+            ));
         }
+
         coordinateTableView.setItems(rows);
 
         TopoObject tempPoly = new TopoObject(points, true);
@@ -305,7 +392,6 @@ public class DashboardView extends Page {
         }
 
         double bestScale = ScaleCalculator.calculateBestScale(tempPoly, ScaleCalculator.PaperSize.A4);
-
         String scaleText = String.format("1 / %.0f", bestScale);
 
         if (this.projectData != null) {
@@ -313,10 +399,10 @@ public class DashboardView extends Page {
         }
 
         if (propertiesSidebar != null) {
-            propertiesSidebar.updateMetrics(areaHa, perimeterM);
             propertiesSidebar.refreshData();
         }
 
+        autoResizeColumns(coordinateTableView);
         if (!isTableVisible) toggleTable();
     }
 
