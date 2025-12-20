@@ -1,5 +1,6 @@
 package com.brasens.model.objects;
 
+import com.brasens.model.TopoLineType;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -13,6 +14,8 @@ public class TopoObject {
     private List<TopoPoint> points;
     private boolean closed;
     private String layerName = "DEFAULT";
+
+    private TopoLineType type = TopoLineType.DEFAULT;
 
     public TopoObject() {
         this.points = new ArrayList<>();

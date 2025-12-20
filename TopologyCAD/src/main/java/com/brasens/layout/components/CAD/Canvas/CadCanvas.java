@@ -1,12 +1,15 @@
 package com.brasens.layout.components.CAD.Canvas;
 
 import com.brasens.functions.HandleFunctions;
+import com.brasens.model.TopoLineType;
 import com.brasens.model.objects.TopoObject;
 import com.brasens.model.objects.TopoPoint;
 import com.brasens.utilities.math.Vector2D;
 import javafx.animation.AnimationTimer;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
+import javafx.scene.control.ContextMenu;
+import javafx.scene.control.MenuItem;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.ScrollEvent;
@@ -46,6 +49,8 @@ public class CadCanvas extends Canvas {
     private double startDragX, startDragY;
     private boolean isDraggingConfirmed = false;
     private final double DRAG_THRESHOLD = 5.0;
+
+    private ContextMenu contextMenu;
 
     public CadCanvas(HandleFunctions functions) {
         super(100, 100);
@@ -289,12 +294,9 @@ public class CadCanvas extends Canvas {
         drawGrid(gc);
 
         double scale = trans.getMxx();
-        double lineWidth = 1.5 / scale;
         double pointSize = 5 / scale;
         double fontSize = 12 / scale;
         double textOffset = 8 / scale;
-
-        gc.setLineWidth(lineWidth);
 
         for (TopoObject obj : objects) {
             if ("TEXT".equals(obj.getLayerName())) continue;
@@ -302,7 +304,30 @@ public class CadCanvas extends Canvas {
             List<TopoPoint> pts = obj.getPoints();
             if (pts.size() < 2) continue;
 
-            gc.setStroke(Color.CYAN);
+            TopoLineType style = obj.getType();
+
+            boolean isSelected = isObjectSelected(obj);
+
+            if (isSelected) {
+                gc.setStroke(Color.ORANGERED);
+                gc.setLineWidth((style.getWidth() + 1.5) / scale);
+            } else {
+                gc.setStroke(style.getColor());
+                gc.setLineWidth(style.getWidth() / scale);
+            }
+
+            if (style.getDashArray() != null) {
+                double[] originalDashes = style.getDashArray();
+                double[] scaledDashes = new double[originalDashes.length];
+
+                for (int i = 0; i < originalDashes.length; i++) {
+                    scaledDashes[i] = originalDashes[i] / scale;
+                }
+                gc.setLineDashes(scaledDashes);
+            } else {
+                gc.setLineDashes(null); // Linha sólida
+            }
+
             gc.beginPath();
 
             TopoPoint p0 = pts.get(0);
@@ -315,6 +340,8 @@ public class CadCanvas extends Canvas {
 
             if (obj.isClosed()) gc.closePath();
             gc.stroke();
+
+            gc.setLineDashes(null);
         }
 
         if ((functions.getFunctionSelected() == HandleFunctions.FunctionType.LINE
@@ -324,7 +351,7 @@ public class CadCanvas extends Canvas {
 
             gc.setStroke(Color.WHITE);
             gc.setLineWidth(1.0 / scale);
-            gc.setLineDashes(5 / scale);
+            gc.setLineDashes(5.0 / scale);
 
             TopoPoint start = functions.getTempStartPoint();
             TopoPoint end = functions.getTempEndPoint();
@@ -342,12 +369,10 @@ public class CadCanvas extends Canvas {
             boolean isTextLayer = "TEXT".equals(obj.getLayerName());
 
             for (TopoPoint p : obj.getPoints()) {
-                // Coordenadas relativas
                 double drawX = p.getX() - globalOffsetX;
                 double drawY = -(p.getY() - globalOffsetY);
 
                 if (isTextLayer) {
-
                     if (p.isSelected()) {
                         gc.setFill(Color.ORANGERED);
                     } else {
@@ -370,10 +395,10 @@ public class CadCanvas extends Canvas {
                     if (p.isSelected()) {
                         gc.setFill(Color.ORANGERED);
                         double selSize = pointSize * 1.5;
-                        gc.fillOval(drawX - selSize/2, drawY - selSize/2, selSize, selSize);
+                        gc.fillOval(drawX - selSize / 2, drawY - selSize / 2, selSize, selSize);
                     } else {
                         gc.setFill(Color.YELLOW);
-                        gc.fillOval(drawX - pointSize/2, drawY - pointSize/2, pointSize, pointSize);
+                        gc.fillOval(drawX - pointSize / 2, drawY - pointSize / 2, pointSize, pointSize);
                     }
 
                     gc.setFill(Color.WHITE);
@@ -383,6 +408,13 @@ public class CadCanvas extends Canvas {
                 }
             }
         }
+    }
+
+    private boolean isObjectSelected(TopoObject obj) {
+        for (TopoPoint p : obj.getPoints()) {
+            if (p.isSelected()) return true;
+        }
+        return false;
     }
 
     public Vector2D screenToWorld(double screenX, double screenY) {
@@ -616,6 +648,23 @@ public class CadCanvas extends Canvas {
         lastMouseX = e.getX();
         lastMouseY = e.getY();
 
+        if (contextMenu != null) {
+            contextMenu.hide();
+        }
+
+        if (e.getButton() == MouseButton.SECONDARY) {
+            TopoPoint hitPoint = findPointNear(e.getX(), e.getY(), 10.0);
+
+            if (hitPoint != null) {
+                TopoObject parentObj = findParentElement(hitPoint);
+
+                if (parentObj != null && !"TEXT".equals(parentObj.getLayerName())) {
+                    showContextMenu(e, parentObj);
+                    return;
+                }
+            }
+        }
+
         functions.updateMousePosition(e.getX(), e.getY());
         functions.startDrag();
 
@@ -655,10 +704,44 @@ public class CadCanvas extends Canvas {
 
         if (dTime < 250) {
             functions.handleDoubleClick(new Vector2D(lastMouseX, lastMouseY), this);
-        }
-        else {
+        } else {
             functions.handleClick(new Vector2D(lastMouseX, lastMouseY), this);
         }
+    }
+
+    private TopoObject findParentElement(TopoPoint p) {
+        for (TopoObject obj : objects) {
+            if (obj.getPoints().contains(p)) {
+                return obj;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Constrói e exibe o menu de contexto com as opções de TopoLineType.
+     */
+    private void showContextMenu(MouseEvent e, TopoObject obj) {
+        contextMenu = new ContextMenu();
+
+        for (TopoLineType type : TopoLineType.values()) {
+            MenuItem item = new MenuItem(type.getLabel());
+
+            javafx.scene.shape.Rectangle icon = new javafx.scene.shape.Rectangle(12, 12, type.getColor());
+            icon.setStroke(Color.BLACK);
+            icon.setStrokeWidth(0.5);
+            item.setGraphic(icon);
+
+            item.setOnAction(event -> {
+                obj.setType(type);
+                redraw();
+                System.out.println("Objeto alterado para: " + type.getLabel());
+            });
+
+            contextMenu.getItems().add(item);
+        }
+
+        contextMenu.show(this, e.getScreenX(), e.getScreenY());
     }
 
     private void handleMouseReleased(MouseEvent e) {
