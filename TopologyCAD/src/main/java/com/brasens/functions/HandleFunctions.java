@@ -1,6 +1,7 @@
 package com.brasens.functions;
 
 import com.brasens.layout.components.CAD.Canvas.CadCanvas;
+import com.brasens.model.objects.TopoObject;
 import com.brasens.model.objects.TopoPoint;
 import com.brasens.utilities.math.Vector2D;
 import javafx.animation.AnimationTimer;
@@ -42,8 +43,12 @@ public class HandleFunctions {
 
     private TopoPoint pointBeingDragged = null;
 
-    private com.brasens.model.objects.TopoObject objectToMove = null;
+    private TopoObject objectToMove = null;
     private Vector2D moveReferencePoint = null;
+
+    private boolean isSelectingBox = false;
+    private Vector2D selectionStartScreenPoint = null;
+    private Vector2D selectionCurrentScreenPoint = null;
 
     public void setFunction(FunctionType type) {
         this.functionSelected = type;
@@ -150,7 +155,12 @@ public class HandleFunctions {
         this.pointBeingDragged = null;
         this.objectToMove = null; // Limpa mover
 
+        this.isSelectingBox = false;
+        this.selectionStartScreenPoint = null;
+        this.selectionCurrentScreenPoint = null;
+
         stopDrag();
+
         canvasReference.finishPolyLine();
         canvasReference.clearSelection();
         canvasReference.redraw();

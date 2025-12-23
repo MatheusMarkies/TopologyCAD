@@ -493,6 +493,36 @@ public class CadCanvas extends Canvas {
             }
         }
 
+        if (functions.isSelectingBox() && functions.getSelectionStartScreenPoint() != null && functions.getSelectionCurrentScreenPoint() != null) {
+            gc.setTransform(new Affine()); // Reseta para coordenadas de tela
+
+            Vector2D start = functions.getSelectionStartScreenPoint();
+            Vector2D end = functions.getSelectionCurrentScreenPoint();
+
+            double x = Math.min(start.x(), end.x());
+            double y = Math.min(start.y(), end.y());
+            double w = Math.abs(end.x() - start.x());
+            double h = Math.abs(end.y() - start.y());
+
+            boolean isCrossing = end.x() < start.x(); // Dir -> Esq
+
+            if (isCrossing) {
+                // CROSSING (Verde, Tracejado)
+                gc.setFill(Color.rgb(0, 255, 0, 0.2)); // Verde transparente
+                gc.setStroke(Color.GREEN);
+                gc.setLineDashes(5, 5); // Tracejado
+            } else {
+                // WINDOW (Azul, Sólido)
+                gc.setFill(Color.rgb(0, 0, 255, 0.2)); // Azul transparente
+                gc.setStroke(Color.BLUE);
+                gc.setLineDashes(null); // Sólido
+            }
+
+            gc.setLineWidth(1);
+            gc.fillRect(x, y, w, h);
+            gc.strokeRect(x, y, w, h);
+        }
+
         if (isLayerVisible("ROSA_VENTOS") && compassImage != null) {
             gc.setTransform(new Affine()); // Reseta para tela
 
@@ -509,6 +539,89 @@ public class CadCanvas extends Canvas {
             gc.drawImage(compassImage, 0, 0, COMPASS_SIZE, COMPASS_SIZE);
             gc.restore();
         }
+    }
+
+    private void performWindowSelection() {
+        Vector2D startScreen = functions.getSelectionStartScreenPoint();
+        Vector2D endScreen = functions.getSelectionCurrentScreenPoint();
+
+        if (startScreen == null || endScreen == null) return;
+
+        // 1. Determina o retângulo de seleção na tela
+        double screenMinX = Math.min(startScreen.x(), endScreen.x());
+        double screenMaxX = Math.max(startScreen.x(), endScreen.x());
+        double screenMinY = Math.min(startScreen.y(), endScreen.y());
+        double screenMaxY = Math.max(startScreen.y(), endScreen.y());
+
+        // Evita seleção de clique simples (arraste muito pequeno)
+        if (Math.abs(screenMaxX - screenMinX) < 2 && Math.abs(screenMaxY - screenMinY) < 2) return;
+
+        // 2. Determina o MODO: Window (Esq->Dir) ou Crossing (Dir->Esq)
+        boolean isCrossing = endScreen.x() < startScreen.x();
+
+        // 3. Converte o retângulo da tela para coordenadas do MUNDO
+        Vector2D worldP1 = screenToWorld(screenMinX, screenMaxY); // Canto inferior esquerdo tela -> mundo
+        Vector2D worldP2 = screenToWorld(screenMaxX, screenMinY); // Canto superior direito tela -> mundo
+
+        double worldMinX = Math.min(worldP1.x(), worldP2.x());
+        double worldMaxX = Math.max(worldP1.x(), worldP2.x());
+        double worldMinY = Math.min(worldP1.y(), worldP2.y());
+        double worldMaxY = Math.max(worldP1.y(), worldP2.y());
+
+        // 4. Itera sobre os objetos e verifica
+        for (TopoObject obj : objects) {
+            if (!isLayerVisible(obj.getLayerName())) continue;
+            if (obj.getPoints().isEmpty()) continue;
+
+            boolean shouldSelect = false;
+
+            if (isCrossing) {
+                // MODO CROSSING (Verde): Basta tocar
+                // Verifica se a Bounding Box do objeto intercepta a da seleção
+                if (objectIntersectsRect(obj, worldMinX, worldMinY, worldMaxX, worldMaxY)) {
+                    shouldSelect = true;
+                }
+            } else {
+                // MODO WINDOW (Azul): Tudo deve estar dentro
+                if (objectIsFullyInsideRect(obj, worldMinX, worldMinY, worldMaxX, worldMaxY)) {
+                    shouldSelect = true;
+                }
+            }
+
+            // Aplica a seleção aos pontos do objeto
+            if (shouldSelect) {
+                for (TopoPoint p : obj.getPoints()) {
+                    p.setSelected(true);
+                }
+            }
+        }
+    }
+
+    // Verifica se TODOS os pontos estão dentro
+    private boolean objectIsFullyInsideRect(TopoObject obj, double minX, double minY, double maxX, double maxY) {
+        for (TopoPoint p : obj.getPoints()) {
+            if (p.getX() < minX || p.getX() > maxX || p.getY() < minY || p.getY() > maxY) {
+                return false; // Um ponto fora já invalida
+            }
+        }
+        return true;
+    }
+
+    // Verifica intersecção de Bounding Boxes (Simplificado para Crossing)
+    private boolean objectIntersectsRect(TopoObject obj, double rMinX, double rMinY, double rMaxX, double rMaxY) {
+        // 1. Calcula Bounding Box do objeto
+        double objMinX = Double.MAX_VALUE, objMinY = Double.MAX_VALUE;
+        double objMaxX = -Double.MAX_VALUE, objMaxY = -Double.MAX_VALUE;
+        for (TopoPoint p : obj.getPoints()) {
+            objMinX = Math.min(objMinX, p.getX());
+            objMinY = Math.min(objMinY, p.getY());
+            objMaxX = Math.max(objMaxX, p.getX());
+            objMaxY = Math.max(objMaxY, p.getY());
+        }
+
+        // 2. Verifica intersecção de retângulos (AABB intersection)
+        return (objMinX <= rMaxX && objMaxX >= rMinX &&
+                objMinY <= rMaxY && objMaxY >= rMinY);
     }
 
     private void drawTable(GraphicsContext gc, com.brasens.model.objects.TopoTableObject table, double scale) {
@@ -733,7 +846,6 @@ public class CadCanvas extends Canvas {
     private void rotateObjectGeometry(TopoObject obj, double angleDeg) {
         if (obj.getPoints().isEmpty()) return;
 
-        // 1. Calcular o Centróide (Pivô)
         double sumX = 0, sumY = 0;
         for (TopoPoint p : obj.getPoints()) {
             sumX += p.getX();
@@ -1029,9 +1141,7 @@ public class CadCanvas extends Canvas {
             contextMenu.hide();
         }
 
-        // --- ATUALIZAÇÃO: Botão Direito (Menu Inteligente) ---
         if (e.getButton() == MouseButton.SECONDARY) {
-            // Tenta achar um ponto sob o mouse
             TopoPoint hitPoint = findPointNear(e.getX(), e.getY(), 10.0);
             TopoObject hitObj = null;
 
@@ -1039,13 +1149,10 @@ public class CadCanvas extends Canvas {
                 hitObj = findParentElement(hitPoint);
             }
 
-            // Chama o menu passando o objeto encontrado OU null (se clicou no vazio)
-            // O showContextMenu saberá filtrar as opções
             showContextMenu(e, hitObj);
-            return; // Interrompe para não selecionar/arrastar com botão direito
+            return;
         }
 
-        // --- Lógica Padrão (Botão Esquerdo / Meio) ---
         functions.updateMousePosition(e.getX(), e.getY());
         functions.startDrag();
 
@@ -1056,11 +1163,14 @@ public class CadCanvas extends Canvas {
         TopoPoint hitPoint = findPointNear(e.getX(), e.getY(), 10.0);
 
         if (functions.getFunctionSelected() == HandleFunctions.FunctionType.NONE) {
+
             if (hitPoint != null) {
                 functions.setPointBeingDragged(hitPoint);
 
                 if (!hitPoint.isSelected()) {
-                    clearSelection();
+                    if (!e.isControlDown() && !e.isShiftDown()) {
+                        clearSelection();
+                    }
                     hitPoint.setSelected(true);
                 }
 
@@ -1071,12 +1181,20 @@ public class CadCanvas extends Canvas {
                 redraw();
                 return;
             } else {
-                clearSelection();
-                redraw();
+                if (!e.isControlDown() && !e.isShiftDown()) {
+                    clearSelection();
+                }
+
+                functions.setSelectingBox(true);
+                functions.setSelectionStartScreenPoint(new Vector2D(e.getX(), e.getY()));
+                functions.setSelectionCurrentScreenPoint(new Vector2D(e.getX(), e.getY()));
 
                 if (onSelectionChanged != null) {
                     onSelectionChanged.accept(null);
                 }
+
+                redraw();
+                return;
             }
         }
 
@@ -1108,11 +1226,27 @@ public class CadCanvas extends Canvas {
             functions.setPointBeingDragged(null);
         }
 
+        if (functions.isSelectingBox()) {
+            performWindowSelection(); // <--- Método novo que faremos abaixo
+
+            // Reseta estado
+            functions.setSelectingBox(false);
+            functions.setSelectionStartScreenPoint(null);
+            functions.setSelectionCurrentScreenPoint(null);
+            redraw();
+        }
+
         functions.stopDrag();
     }
 
     private void handleMouseDragged(MouseEvent e) {
         functions.updateMousePosition(e.getX(), e.getY());
+
+        if (functions.isSelectingBox()) {
+            functions.setSelectionCurrentScreenPoint(new Vector2D(e.getX(), e.getY()));
+            redraw(); // Redesenha a caixa azul/verde
+            return; // Importante: não faz pan nem arrasta pontos
+        }
 
         if (functions.getPointBeingDragged() != null && functions.getFunctionSelected() == HandleFunctions.FunctionType.NONE) {
             Vector2D worldPos = screenToWorld(e.getX(), e.getY());
