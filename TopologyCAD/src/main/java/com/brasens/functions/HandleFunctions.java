@@ -32,7 +32,7 @@ public class HandleFunctions {
     private boolean edgePanEnabled = false;
 
     public enum FunctionType {
-        NONE, EDGEPAN, LINE, POLYLINE, TEXT
+        NONE, EDGEPAN, LINE, POLYLINE, TEXT, PLACE_TABLE, MOVE_OBJECT
     }
 
     private FunctionType functionSelected = FunctionType.NONE;
@@ -41,6 +41,9 @@ public class HandleFunctions {
     private TopoPoint tempEndPoint = null;
 
     private TopoPoint pointBeingDragged = null;
+
+    private com.brasens.model.objects.TopoObject objectToMove = null;
+    private Vector2D moveReferencePoint = null;
 
     public void setFunction(FunctionType type) {
         this.functionSelected = type;
@@ -71,14 +74,43 @@ public class HandleFunctions {
     }
 
     public void handleMouseMove(Vector2D screenPos, CadCanvas canvasReference) {
-        // Agora aceita LINE ou POLYLINE
+        // Lógica para Ferramentas de Desenho (Linha/Polilinha)
         boolean isDrawingTool = functionSelected == FunctionType.LINE || functionSelected == FunctionType.POLYLINE;
 
         if (isDrawingTool && tempStartPoint != null) {
+            TopoPoint snapPoint = canvasReference.findPointNear(screenPos.x(), screenPos.y(), 15.0);
+            double targetX, targetY;
+
+            if (snapPoint != null) {
+                targetX = snapPoint.getX();
+                targetY = snapPoint.getY();
+            } else {
+                Vector2D worldPos = canvasReference.screenToWorld(screenPos.x(), screenPos.y());
+                targetX = worldPos.x();
+                targetY = worldPos.y();
+            }
+
+            // Cria/Atualiza o ponto fantasma
+            this.tempEndPoint = new TopoPoint("GHOST", targetX, targetY);
+            canvasReference.redraw();
+        }
+
+        // --- CORREÇÃO: Lógica de Mover Objeto (AGORA FORA DO BLOCO DE DESENHO) ---
+        if (functionSelected == FunctionType.MOVE_OBJECT && objectToMove != null && moveReferencePoint != null) {
             Vector2D worldPos = canvasReference.screenToWorld(screenPos.x(), screenPos.y());
 
-            // Cria o ponto fantasma onde o mouse está
-            this.tempEndPoint = new TopoPoint("GHOST", worldPos.x(), worldPos.y());
+            double dx = worldPos.x() - moveReferencePoint.x();
+            double dy = worldPos.y() - moveReferencePoint.y();
+
+            // Move todos os pontos do objeto pelo delta calculado
+            for (TopoPoint p : objectToMove.getPoints()) {
+                p.setX(p.getX() + dx);
+                p.setY(p.getY() + dy);
+            }
+
+            // Atualiza o ponto de referência para o atual
+            moveReferencePoint = new Vector2D(worldPos.x(), worldPos.y());
+
             canvasReference.redraw();
         }
     }
@@ -115,9 +147,8 @@ public class HandleFunctions {
         this.functionSelected = FunctionType.NONE;
         this.tempStartPoint = null;
         this.tempEndPoint = null;
-
-        // NOVO: Solta o ponto se estiver arrastando
         this.pointBeingDragged = null;
+        this.objectToMove = null; // Limpa mover
 
         stopDrag();
         canvasReference.finishPolyLine();
@@ -125,6 +156,19 @@ public class HandleFunctions {
         canvasReference.redraw();
 
         System.out.println("Operação cancelada (ESC).");
+    }
+
+    private TopoPoint getPointOrNew(Vector2D screenPos, CadCanvas canvas) {
+        TopoPoint hitPoint = canvas.findPointNear(screenPos.x(), screenPos.y(), 10.0);
+
+        if (hitPoint != null) {
+            System.out.println("Snap no ponto: " + hitPoint.getName());
+            return hitPoint;
+        }
+
+        Vector2D worldPos = canvas.screenToWorld(screenPos.x(), screenPos.y());
+        String name = canvas.getNextPointName();
+        return new TopoPoint(name, worldPos.x(), worldPos.y());
     }
 
     public void handleClick(Vector2D pointer, CadCanvas canvasReference){
@@ -136,34 +180,29 @@ public class HandleFunctions {
 
                 if (hitPoint != null) {
                     System.out.println("Ponto Selecionado: " + hitPoint.getName());
-
                     boolean wasSelected = hitPoint.isSelected();
-
                     canvasReference.clearSelection();
-
                     if (!wasSelected) {
                         hitPoint.setSelected(true);
                     }
                 } else {
                     canvasReference.clearSelection();
                 }
-
                 canvasReference.redraw();
             }
             case EDGEPAN -> {
 
             }
             case LINE -> {
-                if (tempStartPoint == null) {
-                    String name = canvasReference.getNextPointName();
+                TopoPoint clickedPoint = getPointOrNew(pointer, canvasReference);
 
-                    tempStartPoint = new TopoPoint(name, worldPos.x(), worldPos.y());
+                if (tempStartPoint == null) {
+                    tempStartPoint = clickedPoint;
                     edgePanEnabled = true;
                 } else {
-                    String name = canvasReference.getNextPointName(tempStartPoint.getName());
-
-                    TopoPoint finalEnd = new TopoPoint(name, worldPos.x(), worldPos.y());
-                    canvasReference.addLineObject(tempStartPoint, finalEnd);
+                    if (clickedPoint != tempStartPoint) {
+                        canvasReference.addLineObject(tempStartPoint, clickedPoint);
+                    }
 
                     tempStartPoint = null;
                     tempEndPoint = null;
@@ -172,23 +211,17 @@ public class HandleFunctions {
                 }
             }
             case POLYLINE -> {
-                String ptName = "PT-" + (canvasReference.getObjects().size() + 100);
+                TopoPoint clickedPoint = getPointOrNew(pointer, canvasReference);
 
                 if (tempStartPoint == null) {
                     edgePanEnabled = true;
+                    tempStartPoint = clickedPoint;
 
-                    String name = canvasReference.getNextPointName();
-
-                    tempStartPoint = new TopoPoint(name, worldPos.x(), worldPos.y());
                     canvasReference.createPolyLine(tempStartPoint);
 
                 } else {
-                    String name = canvasReference.getNextPointName();
-
-                    TopoPoint newPoint = new TopoPoint(name, worldPos.x(), worldPos.y());
-                    canvasReference.addPointToPolyLine(newPoint);
-
-                    tempStartPoint = newPoint;
+                    canvasReference.addPointToPolyLine(clickedPoint);
+                    tempStartPoint = clickedPoint;
                 }
             }
             case TEXT -> {
@@ -204,29 +237,34 @@ public class HandleFunctions {
                         canvasReference.addTextObject(worldPos.x(), worldPos.y(), text);
                     }
                 });
+            }
 
+            case PLACE_TABLE -> {
+                canvasReference.createTableAt(worldPos.x(), worldPos.y());
+                setFunction(FunctionType.NONE);
+                canvasReference.getScene().setCursor(javafx.scene.Cursor.DEFAULT);
+            }
+
+            case MOVE_OBJECT -> {
+                System.out.println("Objeto movido com sucesso.");
+                this.objectToMove = null;
+                this.moveReferencePoint = null;
+                setFunction(FunctionType.NONE);
+                canvasReference.redraw();
             }
         }
     }
+
     public void handleDoubleClick(Vector2D pointer, CadCanvas canvasReference){
         switch (functionSelected){
-            case EDGEPAN -> {
-
-            }
-            case LINE -> {
-
-            }
             case POLYLINE -> {
                 canvasReference.finishPolyLine();
-
                 tempStartPoint = null;
                 tempEndPoint = null;
                 edgePanEnabled = false;
                 canvasReference.redraw();
             }
-            case TEXT -> {
-
-            }
+            default -> {}
         }
     }
 }

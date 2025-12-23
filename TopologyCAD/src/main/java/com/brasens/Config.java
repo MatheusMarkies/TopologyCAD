@@ -10,7 +10,7 @@ import java.util.Properties;
 import java.util.TimeZone;
 
 public class Config {
-    public static final String APP_VERSION = "SNAPSHOT 1.6.4";
+    public static final String APP_VERSION = "SNAPSHOT 1.0";
 
     public static final String BACKEND_HOST = "";
 

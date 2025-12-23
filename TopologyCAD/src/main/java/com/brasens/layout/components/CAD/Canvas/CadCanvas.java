@@ -16,6 +16,7 @@ import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.ScrollEvent;
 import javafx.scene.paint.Color;
+import javafx.scene.text.FontWeight;
 import javafx.scene.transform.Affine;
 import javafx.scene.transform.NonInvertibleTransformException;
 import lombok.Getter;
@@ -57,6 +58,10 @@ public class CadCanvas extends Canvas {
 
     private final Map<String, Boolean> layerVisibility = new HashMap<>();
 
+    private boolean showBackgroundGrid = true;
+
+    private static final List<TopoObject> CLIPBOARD = new ArrayList<>();
+
     public CadCanvas(HandleFunctions functions) {
         super(100, 100);
         this.functions = functions;
@@ -76,6 +81,7 @@ public class CadCanvas extends Canvas {
         layerVisibility.put("CURVA_MESTRA", true);
         layerVisibility.put("CURVA_NORMAL", true);
         layerVisibility.put("TRIANGULACAO", false);
+        layerVisibility.put("TABELA", true);
         layerVisibility.put("ROSA_VENTOS", true);
 
         try {
@@ -315,6 +321,20 @@ public class CadCanvas extends Canvas {
         return layerVisibility.getOrDefault(layerName, true);
     }
 
+    public void createTableAt(double x, double y) {
+        List<TopoPoint> allPoints = getAllPoints();
+        if (allPoints.isEmpty()) {
+            System.out.println("Sem pontos para gerar tabela.");
+            return;
+        }
+
+        com.brasens.model.objects.TopoTableObject table =
+                new com.brasens.model.objects.TopoTableObject(x, y, new ArrayList<>(allPoints));
+
+        this.objects.add(table);
+        redraw();
+    }
+
     public void redraw() {
         GraphicsContext gc = getGraphicsContext2D();
 
@@ -324,7 +344,9 @@ public class CadCanvas extends Canvas {
 
         gc.setTransform(trans);
 
-        drawGrid(gc);
+        if (showBackgroundGrid) {
+            drawGrid(gc);
+        }
 
         double scale = trans.getMxx();
         double pointSize = 5 / scale;
@@ -332,15 +354,20 @@ public class CadCanvas extends Canvas {
         double textOffset = 8 / scale;
 
         for (TopoObject obj : objects) {
-
             if (!isLayerVisible(obj.getLayerName())) continue;
+
+            if (obj instanceof com.brasens.model.objects.TopoTableObject) {
+                drawTable(gc, (com.brasens.model.objects.TopoTableObject) obj, scale);
+                continue;
+            }
+
             if ("TEXT".equals(obj.getLayerName())) continue;
 
             List<TopoPoint> pts = obj.getPoints();
+
             if (pts.size() < 2) continue;
 
             TopoLineType style = obj.getType();
-            boolean isContour = (style == TopoLineType.CURVA_MESTRA || style == TopoLineType.CURVA_INTERMEDIARIA);
             boolean isSelected = isObjectSelected(obj);
 
             if (isSelected) {
@@ -378,13 +405,11 @@ public class CadCanvas extends Canvas {
             if (style == TopoLineType.CURVA_MESTRA && pts.size() >= 2) {
                 TopoPoint p1 = pts.get(0);
                 TopoPoint p2 = pts.get(1);
-
                 double midX = (p1.getX() + p2.getX()) / 2.0;
                 double midY = (p1.getY() + p2.getY()) / 2.0;
 
                 gc.setFill(style.getColor());
-                gc.setFont(javafx.scene.text.Font.font("Arial", javafx.scene.text.FontWeight.BOLD, fontSize));
-
+                gc.setFont(javafx.scene.text.Font.font("Arial", FontWeight.BOLD, fontSize));
                 gc.fillText(String.format("%.0f", p1.getZ()), midX - globalOffsetX, -(midY - globalOffsetY));
             }
         }
@@ -413,7 +438,10 @@ public class CadCanvas extends Canvas {
         for (TopoObject obj : objects) {
             if (!isLayerVisible(obj.getLayerName())) continue;
 
+            if (obj instanceof com.brasens.model.objects.TopoTableObject) continue;
+
             boolean isTextLayer = "TEXT".equals(obj.getLayerName());
+
             TopoLineType style = obj.getType();
             boolean isContour = (style == TopoLineType.CURVA_MESTRA || style == TopoLineType.CURVA_INTERMEDIARIA);
 
@@ -435,6 +463,7 @@ public class CadCanvas extends Canvas {
                         gc.strokeLine(drawX - s, drawY + s, drawX + s, drawY - s);
                     }
                 } else {
+
                     if (isContour) {
                         if (p.isSelected()) {
                             gc.setFill(Color.ORANGERED);
@@ -453,6 +482,7 @@ public class CadCanvas extends Canvas {
                         gc.fillOval(drawX - pointSize / 2, drawY - pointSize / 2, pointSize, pointSize);
                     }
 
+                    // Nome do Ponto
                     gc.setFill(Color.WHITE);
                     if (p.getName() != null && !p.getName().isEmpty()) {
                         if (!p.getName().startsWith("INT")) {
@@ -464,7 +494,7 @@ public class CadCanvas extends Canvas {
         }
 
         if (isLayerVisible("ROSA_VENTOS") && compassImage != null) {
-            gc.setTransform(new Affine());
+            gc.setTransform(new Affine()); // Reseta para tela
 
             double xPos = getWidth() - COMPASS_SIZE - COMPASS_MARGIN + 5;
             double yPos = getHeight() - COMPASS_SIZE - COMPASS_MARGIN - 5;
@@ -473,14 +503,273 @@ public class CadCanvas extends Canvas {
             double angleDeg = Math.toDegrees(angleRad);
 
             gc.save();
-
             gc.translate(xPos + COMPASS_SIZE / 2, yPos + COMPASS_SIZE / 2);
             gc.rotate(angleDeg);
             gc.translate(-COMPASS_SIZE / 2, -COMPASS_SIZE / 2);
-
             gc.drawImage(compassImage, 0, 0, COMPASS_SIZE, COMPASS_SIZE);
             gc.restore();
         }
+    }
+
+    private void drawTable(GraphicsContext gc, com.brasens.model.objects.TopoTableObject table, double scale) {
+        TopoPoint origin = table.getPoints().get(0);
+
+        double startX = origin.getX() - globalOffsetX;
+        double startY = -(origin.getY() - globalOffsetY);
+
+        // Dimensões
+        double rowH = table.getRowHeight(); // Metros
+        double colW = table.getColWidth();  // Metros
+        double totalW = table.getTotalWidth();
+        double totalH = table.getTotalHeight();
+
+        gc.setLineWidth(1.0 / scale);
+        gc.setStroke(Color.WHITE);
+        gc.setFill(Color.WHITE);
+
+        gc.setFont(javafx.scene.text.Font.font("Arial", FontWeight.NORMAL, table.getFontSize()));
+
+        gc.strokeRect(startX, startY, totalW, totalH);
+
+        for (int i = 0; i <= table.getDataPoints().size() + 1; i++) {
+            double y = startY + (i * rowH);
+            gc.strokeLine(startX, y, startX + totalW, y);
+        }
+
+        for (int i = 0; i <= table.getHeaders().length; i++) {
+            double x = startX + (i * colW);
+            gc.strokeLine(x, startY, x, startY + totalH);
+        }
+
+        double textOffX = colW * 0.1;
+        double textOffY = rowH * 0.7;
+
+        String[] headers = table.getHeaders();
+        for (int i = 0; i < headers.length; i++) {
+            gc.fillText(headers[i], startX + (i * colW) + textOffX, startY + textOffY);
+        }
+
+        double currentY = startY + rowH;
+        for (TopoPoint p : table.getDataPoints()) {
+            gc.fillText(p.getName(), startX + textOffX, currentY + textOffY);
+            gc.fillText(String.format("%.2f", p.getY()), startX + colW + textOffX, currentY + textOffY);
+            gc.fillText(String.format("%.2f", p.getX()), startX + (colW * 2) + textOffX, currentY + textOffY);
+            gc.fillText(String.format("%.2f", p.getZ()), startX + (colW * 3) + textOffX, currentY + textOffY);
+
+            currentY += rowH;
+        }
+
+        if (isObjectSelected(table)) {
+            gc.setStroke(Color.ORANGERED);
+            gc.setLineWidth(2.0 / scale);
+            gc.strokeRect(startX - (0.5/scale), startY - (0.5/scale), totalW + (1/scale), totalH + (1/scale));
+        }
+    }
+
+    private void showContextMenu(MouseEvent e, TopoObject obj) {
+        contextMenu = new ContextMenu();
+        Vector2D clickPos = screenToWorld(e.getX(), e.getY());
+
+        MenuItem itemPaste = new MenuItem("Colar Aqui");
+        itemPaste.setDisable(CLIPBOARD.isEmpty());
+        itemPaste.setOnAction(ev -> pasteFromClipboard(clickPos));
+
+        contextMenu.getItems().add(itemPaste);
+
+        if (obj != null) {
+            contextMenu.getItems().add(new javafx.scene.control.SeparatorMenuItem());
+
+            MenuItem titleItem = new MenuItem("Objeto: " + (obj.getId() != null ? obj.getId() : "Sem ID"));
+            titleItem.setDisable(true);
+            titleItem.setStyle("-fx-font-weight: bold; -fx-opacity: 1.0;");
+            contextMenu.getItems().add(titleItem);
+
+            MenuItem itemCut = new MenuItem("Recortar");
+            itemCut.setOnAction(ev -> {
+                copyObjectToClipboard(obj); // Copia
+                objects.remove(obj);        // Deleta
+                if (onContentChange != null) onContentChange.run();
+                redraw();
+                System.out.println("Objeto recortado.");
+            });
+
+            MenuItem itemCopy = new MenuItem("Copiar");
+            itemCopy.setOnAction(ev -> copyObjectToClipboard(obj));
+
+            MenuItem itemMove = new MenuItem("Mover Objeto");
+            itemMove.setOnAction(ev -> {
+                // Ativa o modo de movimento
+                functions.setFunction(HandleFunctions.FunctionType.MOVE_OBJECT);
+                functions.setObjectToMove(obj);
+                // Define o ponto inicial do movimento como a posição atual do mouse no mundo
+                functions.setMoveReferencePoint(clickPos);
+                System.out.println("Movendo objeto...");
+            });
+
+            MenuItem itemRotate = new MenuItem("Rotacionar...");
+            itemRotate.setOnAction(ev -> handleRotateObject(obj));
+
+            MenuItem itemDelete = new MenuItem("Excluir");
+            itemDelete.setStyle("-fx-text-fill: red;");
+            itemDelete.setOnAction(ev -> {
+                objects.remove(obj);
+                if (onContentChange != null) onContentChange.run();
+                redraw();
+            });
+
+            contextMenu.getItems().addAll(itemCut, itemCopy, itemMove, itemRotate, new javafx.scene.control.SeparatorMenuItem(), itemDelete);
+
+            javafx.scene.control.Menu menuStyles = new javafx.scene.control.Menu("Estilo de Linha");
+            for (TopoLineType type : TopoLineType.values()) {
+                MenuItem item = new MenuItem(type.getLabel());
+                javafx.scene.shape.Rectangle icon = new javafx.scene.shape.Rectangle(12, 12, type.getColor());
+                icon.setStroke(Color.BLACK);
+                item.setGraphic(icon);
+                item.setOnAction(event -> {
+                    obj.setType(type);
+                    redraw();
+                });
+                menuStyles.getItems().add(item);
+            }
+            contextMenu.getItems().add(new javafx.scene.control.SeparatorMenuItem());
+            contextMenu.getItems().add(menuStyles);
+
+            // PROPRIEDADES
+            MenuItem itemProps = new MenuItem("Propriedades...");
+            itemProps.setOnAction(ev -> handleProperties(obj));
+            contextMenu.getItems().add(itemProps);
+        }
+
+        contextMenu.show(this, e.getScreenX(), e.getScreenY());
+    }
+
+    private void copyObjectToClipboard(TopoObject obj) {
+        CLIPBOARD.clear();
+        TopoObject clone = cloneObject(obj);
+        CLIPBOARD.add(clone);
+        System.out.println("Objeto copiado para o clipboard.");
+    }
+
+    private void pasteFromClipboard(Vector2D dropLocation) {
+        if (CLIPBOARD.isEmpty()) return;
+
+        TopoObject source = CLIPBOARD.get(0);
+        TopoObject clone = cloneObject(source);
+
+        double sumX = 0;
+        double sumY = 0;
+        int count = 0;
+
+        for(TopoPoint p : source.getPoints()) {
+            sumX += p.getX();
+            sumY += p.getY();
+            count++;
+        }
+
+        double centerX = (count > 0) ? sumX / count : 0;
+        double centerY = (count > 0) ? sumY / count : 0;
+
+        double dx = dropLocation.x() - centerX;
+        double dy = dropLocation.y() - centerY;
+
+        // 3. Aplica o movimento
+        for(TopoPoint p : clone.getPoints()) {
+            p.setX(p.getX() + dx);
+            p.setY(p.getY() + dy);
+        }
+
+        clone.setId(clone.getId() + "-COPY");
+        this.objects.add(clone);
+        redraw();
+    }
+
+    private TopoObject cloneObject(TopoObject source) {
+        TopoObject clone = new TopoObject();
+        clone.setId(source.getId());
+        clone.setLayerName(source.getLayerName());
+        clone.setType(source.getType());
+        clone.setClosed(source.isClosed());
+
+        // Clona pontos (Deep Copy)
+        for (TopoPoint p : source.getPoints()) {
+            TopoPoint np = new TopoPoint(p.getName(), p.getX(), p.getY());
+            np.setZ(p.getZ());
+            clone.addPoint(np);
+        }
+
+        // Se for tabela, copia atributos específicos
+        if (source instanceof com.brasens.model.objects.TopoTableObject) {
+            com.brasens.model.objects.TopoTableObject srcTbl = (com.brasens.model.objects.TopoTableObject) source;
+            com.brasens.model.objects.TopoTableObject newTbl = new com.brasens.model.objects.TopoTableObject(
+                    srcTbl.getPoints().get(0).getX(),
+                    srcTbl.getPoints().get(0).getY(),
+                    new ArrayList<>(srcTbl.getDataPoints()) // Copia lista
+            );
+            return newTbl;
+        }
+
+        return clone;
+    }
+
+    // --- LÓGICA DE ROTAÇÃO ---
+
+    private void handleRotateObject(TopoObject obj) {
+        javafx.scene.control.TextInputDialog dialog = new javafx.scene.control.TextInputDialog("0");
+        dialog.setTitle("Rotacionar Objeto");
+        dialog.setHeaderText("Digite o ângulo de rotação (graus):");
+        dialog.setContentText("Ângulo (positivo = anti-horário):");
+
+        dialog.showAndWait().ifPresent(val -> {
+            try {
+                double angleDeg = Double.parseDouble(val.replace(",", "."));
+                rotateObjectGeometry(obj, angleDeg);
+                redraw();
+            } catch (NumberFormatException e) {
+                System.err.println("Ângulo inválido");
+            }
+        });
+    }
+
+    private void rotateObjectGeometry(TopoObject obj, double angleDeg) {
+        if (obj.getPoints().isEmpty()) return;
+
+        // 1. Calcular o Centróide (Pivô)
+        double sumX = 0, sumY = 0;
+        for (TopoPoint p : obj.getPoints()) {
+            sumX += p.getX();
+            sumY += p.getY();
+        }
+        double cx = sumX / obj.getPoints().size();
+        double cy = sumY / obj.getPoints().size();
+
+        // 2. Aplicar rotação em cada ponto
+        double rad = Math.toRadians(angleDeg);
+        double cos = Math.cos(rad);
+        double sin = Math.sin(rad);
+
+        for (TopoPoint p : obj.getPoints()) {
+            double dx = p.getX() - cx;
+            double dy = p.getY() - cy;
+
+            double xNew = cx + (dx * cos - dy * sin);
+            double yNew = cy + (dx * sin + dy * cos);
+
+            p.setX(xNew);
+            p.setY(yNew);
+        }
+    }
+
+    // --- LÓGICA DE PROPRIEDADES ---
+    private void handleProperties(TopoObject obj) {
+        javafx.scene.control.TextInputDialog dialog = new javafx.scene.control.TextInputDialog(obj.getId());
+        dialog.setTitle("Propriedades");
+        dialog.setHeaderText("Renomear Identificador do Objeto:");
+        dialog.setContentText("Novo ID:");
+
+        dialog.showAndWait().ifPresent(newId -> {
+            obj.setId(newId);
+            redraw();
+        });
     }
 
     private void drawSelectionCross(GraphicsContext gc, double x, double y, double scale) {
@@ -629,6 +918,7 @@ public class CadCanvas extends Canvas {
         boolean somethingChanged = false;
 
         for (TopoObject obj : objects) {
+            // 1. Remove apenas os pontos selecionados (que estão laranjas)
             boolean removed = obj.getPoints().removeIf(TopoPoint::isSelected);
 
             if (removed) {
@@ -637,18 +927,24 @@ public class CadCanvas extends Canvas {
 
             if (obj.getPoints().isEmpty()) {
                 objectsToRemove.add(obj);
-            } else if (!"TEXT".equals(obj.getLayerName()) && obj.getPoints().size() < 2) {
+            }
+
+            else if (!"TEXT".equals(obj.getLayerName()) &&
+                    !"TABELA".equals(obj.getLayerName()) &&
+                    !"NUVEM_PONTOS".equals(obj.getLayerName()) &&
+                    obj.getPoints().size() < 2) {
+
                 objectsToRemove.add(obj);
             }
         }
 
-        if (somethingChanged) {
+        if (somethingChanged || !objectsToRemove.isEmpty()) {
             objects.removeAll(objectsToRemove);
 
             if (onContentChange != null) onContentChange.run();
             if (onSelectionChanged != null) onSelectionChanged.accept(null);
             redraw();
-            System.out.println("Itens deletados.");
+            System.out.println("Itens deletados e limpeza realizada.");
         }
     }
 
@@ -733,19 +1029,23 @@ public class CadCanvas extends Canvas {
             contextMenu.hide();
         }
 
+        // --- ATUALIZAÇÃO: Botão Direito (Menu Inteligente) ---
         if (e.getButton() == MouseButton.SECONDARY) {
+            // Tenta achar um ponto sob o mouse
             TopoPoint hitPoint = findPointNear(e.getX(), e.getY(), 10.0);
+            TopoObject hitObj = null;
 
             if (hitPoint != null) {
-                TopoObject parentObj = findParentElement(hitPoint);
-
-                if (parentObj != null && !"TEXT".equals(parentObj.getLayerName())) {
-                    showContextMenu(e, parentObj);
-                    return;
-                }
+                hitObj = findParentElement(hitPoint);
             }
+
+            // Chama o menu passando o objeto encontrado OU null (se clicou no vazio)
+            // O showContextMenu saberá filtrar as opções
+            showContextMenu(e, hitObj);
+            return; // Interrompe para não selecionar/arrastar com botão direito
         }
 
+        // --- Lógica Padrão (Botão Esquerdo / Meio) ---
         functions.updateMousePosition(e.getX(), e.getY());
         functions.startDrag();
 
@@ -797,32 +1097,6 @@ public class CadCanvas extends Canvas {
             }
         }
         return null;
-    }
-
-    /**
-     * Constrói e exibe o menu de contexto com as opções de TopoLineType.
-     */
-    private void showContextMenu(MouseEvent e, TopoObject obj) {
-        contextMenu = new ContextMenu();
-
-        for (TopoLineType type : TopoLineType.values()) {
-            MenuItem item = new MenuItem(type.getLabel());
-
-            javafx.scene.shape.Rectangle icon = new javafx.scene.shape.Rectangle(12, 12, type.getColor());
-            icon.setStroke(Color.BLACK);
-            icon.setStrokeWidth(0.5);
-            item.setGraphic(icon);
-
-            item.setOnAction(event -> {
-                obj.setType(type);
-                redraw();
-                System.out.println("Objeto alterado para: " + type.getLabel());
-            });
-
-            contextMenu.getItems().add(item);
-        }
-
-        contextMenu.show(this, e.getScreenX(), e.getScreenY());
     }
 
     private void handleMouseReleased(MouseEvent e) {

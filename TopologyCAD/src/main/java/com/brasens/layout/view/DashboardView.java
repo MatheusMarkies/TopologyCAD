@@ -61,9 +61,12 @@ public class DashboardView extends Page {
     private CustomButton btnPolyline;
     private CustomButton btnUIText;
     private CustomButton btnZoomExtents;
-    private CustomButton btnShowCoordenatesTable;
+    private CustomButton btnShowCoordinatesTable;
+    private CustomButton btnTable;
     private CustomButton btnLayers;
     private CustomButton btnContour;
+    private CustomButton btnToggleGrid;
+
     BorderPane layout = new BorderPane();
 
     private VBox sidebarPane;
@@ -576,7 +579,7 @@ public class DashboardView extends Page {
             toggleTable();
 
             itemToggleTable.setSelected(isTableVisible);
-            btnShowCoordenatesTable.setActive(!btnShowCoordenatesTable.isActive());
+            btnShowCoordinatesTable.setActive(!btnShowCoordinatesTable.isActive());
         });
 
         menuView.getItems().add(itemToggleTable);
@@ -652,7 +655,7 @@ public class DashboardView extends Page {
         }
     }
 
-    private void updateSidebarWithNewData() {
+    public void updateSidebarWithNewData() {
         layout.getChildren().remove(propertiesSidebar);
         propertiesSidebar = new PropertiesSidebar(this.projectData);
         if (isTableVisible) {
@@ -669,7 +672,7 @@ public class DashboardView extends Page {
         alert.showAndWait();
     }
 
-    private void openProjectPropertiesDialog() {
+    public void openProjectPropertiesDialog() {
         ProjectPropertiesDialog dialog = new ProjectPropertiesDialog(projectData);
 
         Optional<Boolean> result = dialog.showAndWait();
@@ -683,7 +686,7 @@ public class DashboardView extends Page {
         }
     }
 
-    private void loadLocationImage() {
+    public void loadLocationImage() {
         FileChooser fc = new FileChooser();
         fc.setTitle("Selecione a Planta de Localização");
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Imagens", "*.png", "*.jpg", "*.jpeg"));
@@ -759,7 +762,7 @@ public class DashboardView extends Page {
         return toolBar;
     }
 
-    private void handleShowLayers(){
+    public void handleShowLayers(){
         ContextMenu layerMenu = new ContextMenu();
 
         CheckMenuItem itemMestra = new CheckMenuItem("Curvas Mestras (Cotas)");
@@ -788,7 +791,7 @@ public class DashboardView extends Page {
         layerMenu.show(btnLayers, Side.BOTTOM, 0, 0);
     }
 
-    private void handleCreateContourCurves() {
+    public void handleCreateContourCurves() {
         TextInputDialog dialog = new TextInputDialog("1.0");
         dialog.setTitle("Gerar Curvas de Nível");
         dialog.setHeaderText("Altimetria Automática (TIN)");
@@ -824,7 +827,7 @@ public class DashboardView extends Page {
         });
     }
 
-    private void handleImportPointsFile(){
+    public void handleImportPointsFile() {
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("Importar Pontos Topográficos");
         fileChooser.getExtensionFilters().add(
@@ -836,16 +839,83 @@ public class DashboardView extends Page {
         if (file != null) {
             try {
                 List<TopoPoint> pontosImportados = PointImporter.importFromCSV(file);
-                System.out.println("Importados " + pontosImportados.size() + " pontos.");
 
-                getCadCanvas().setImportedPoints(pontosImportados);
-                updateCoordinatesTable(getCadCanvas().getAllPoints());
+                if (pontosImportados.isEmpty()) {
+                    showAlert("Aviso", "Nenhum ponto encontrado no arquivo.");
+                    return;
+                }
+
+                Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+                alert.setTitle("Opções de Importação");
+                alert.setHeaderText("Foram encontrados " + pontosImportados.size() + " pontos.");
+                alert.setContentText("Como deseja inserir estes dados no desenho?");
+
+                ButtonType btnPontos = new ButtonType("Apenas Pontos");
+                ButtonType btnPerimetro = new ButtonType("Ligar Perímetro");
+                ButtonType btnCancelar = new ButtonType("Cancelar", ButtonBar.ButtonData.CANCEL_CLOSE);
+
+                alert.getButtonTypes().setAll(btnPontos, btnPerimetro, btnCancelar);
+
+                Optional<ButtonType> result = alert.showAndWait();
+
+                if (result.isPresent()) {
+                    if (result.get() == btnPontos) {
+                        for(TopoPoint point : pontosImportados) {
+                            List<TopoPoint> pointToList = new ArrayList<>();
+                            pointToList.add(point);
+                            TopoObject nuvem = new TopoObject(pointToList, false);
+                            nuvem.setId("IMPORT-" + System.currentTimeMillis());
+
+                            nuvem.setLayerName("NUVEM_PONTOS");
+
+                            cadCanvas.getObjects().add(nuvem);
+                        }
+
+                        System.out.println("Importados pontos isolados.");
+
+                    } else if (result.get() == btnPerimetro) {
+                        cadCanvas.setImportedPoints(pontosImportados);
+                        System.out.println("Importado como perímetro fechado.");
+                    } else {
+                        return;
+                    }
+
+                    updateCoordinatesTable(cadCanvas.getAllPoints());
+                    cadCanvas.zoomExtents();
+                    cadCanvas.redraw();
+                }
 
             } catch (Exception ex) {
                 ex.printStackTrace();
                 showAlert("Erro na Importação", ex.getMessage());
             }
         }
+    }
+
+    public void handleAddTable(){
+        List<TopoPoint> points = cadCanvas.getAllPoints();
+        if (points.isEmpty()) {
+            showAlert("Aviso", "Não há pontos para gerar a tabela.");
+            return;
+        }
+
+        TopoPoint ref = points.get(0);
+        double startX = ref.getX() + 20;
+        double startY = ref.getY();
+
+        com.brasens.model.objects.TopoTableObject tabela =
+                new com.brasens.model.objects.TopoTableObject(startX, startY, new ArrayList<>(points));
+
+        cadCanvas.getObjects().add(tabela);
+        cadCanvas.redraw();
+        System.out.println("Tabela inserida no Canvas.");
+    }
+
+    public void handleShowGrid(){
+        boolean newState = !cadCanvas.isShowBackgroundGrid();
+        cadCanvas.setShowBackgroundGrid(newState);
+        cadCanvas.redraw();
+        btnToggleGrid.setActive(newState);
     }
 
     private ToolBar createMainToolBar() {
@@ -961,31 +1031,42 @@ public class DashboardView extends Page {
         });
 
         // --- BOTÃO TABELA ---
-        btnShowCoordenatesTable = new CustomButton("",
+        btnShowCoordinatesTable = new CustomButton("",
                 new Image(CAD.class.getResource("/mspm/icons/table-grid.png").toString()),
                 "",
                 btnImageSize
         );
-        btnShowCoordenatesTable.setAnimation(colorDefault, colorHover, colorActive, 200, true);
-        btnShowCoordenatesTable.setOnMouseClicked(e -> {
+        btnShowCoordinatesTable.setAnimation(colorDefault, colorHover, colorActive, 200, true);
+        btnShowCoordinatesTable.setOnMouseClicked(e -> {
             toggleTable();
-            btnShowCoordenatesTable.setActive(!btnShowCoordenatesTable.isActive());
+            btnShowCoordinatesTable.setActive(!btnShowCoordinatesTable.isActive());
         });
-        btnShowCoordenatesTable.setActive(true);
+        btnShowCoordinatesTable.setActive(true);
 
-        btnLayers = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/layers.png").toString()), // Use um ícone de "folhas sobrepostas"
+        btnTable = new CustomButton("",
+                new Image(CAD.class.getResource("/mspm/icons/data.png").toString()), // Use um ícone apropriado
                 "",
                 btnImageSize
         );
-        btnLayers.setAnimation(colorDefault, colorHover, colorActive, 200, true); // Toggle button
+        btnTable.setAnimation(colorDefault, colorHover, colorActive, 200, false);
+
+        btnTable.setOnMouseClicked(e -> {
+            handleAddTable();
+        });
+
+        btnLayers = new CustomButton("",
+                new Image(CAD.class.getResource("/mspm/icons/layers.png").toString()),
+                "",
+                btnImageSize
+        );
+        btnLayers.setAnimation(colorDefault, colorHover, colorActive, 200, true);
 
         btnLayers.setOnMouseClicked(e -> {
             handleShowLayers();
         });
 
         btnContour = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/contour.png").toString()), // Use um ícone adequado
+                new Image(CAD.class.getResource("/mspm/icons/contour.png").toString()),
                 "",
                 btnImageSize
         );
@@ -995,18 +1076,32 @@ public class DashboardView extends Page {
             handleCreateContourCurves();
             });
 
+        btnToggleGrid = new CustomButton("",
+                new Image(CAD.class.getResource("/mspm/icons/pixels.png").toString()),
+                "",
+                btnImageSize
+        );
+        btnToggleGrid.setAnimation(colorDefault, colorHover, colorActive, 200, true);
+        btnToggleGrid.setActive(true);
+
+        btnToggleGrid.setOnMouseClicked(e -> {
+            handleShowGrid();
+        });
+
         toolBar.getItems().addAll(
-                btnImport,
-                btnSave,
+                btnImport, btnSave,
+
                 new Separator(Orientation.VERTICAL),
-                btnPan,
-                btnZoomExtents,
+                btnPan, btnZoomExtents,
+
                 new Separator(Orientation.VERTICAL),
-                btnLine,
-                btnPolyline,
-                btnUIText,
+                btnLine, btnPolyline, btnUIText,
+
                 new Separator(Orientation.VERTICAL),
-                btnShowCoordenatesTable, btnLayers, btnContour
+                btnShowCoordinatesTable, btnTable,
+
+                new Separator(Orientation.VERTICAL),
+                btnLayers, btnContour, btnToggleGrid
         );
 
         return toolBar;
