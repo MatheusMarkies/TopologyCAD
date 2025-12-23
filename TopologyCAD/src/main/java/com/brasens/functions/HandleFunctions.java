@@ -50,6 +50,8 @@ public class HandleFunctions {
     private Vector2D selectionStartScreenPoint = null;
     private Vector2D selectionCurrentScreenPoint = null;
 
+    private Runnable onActionFinished;
+
     public void setFunction(FunctionType type) {
         this.functionSelected = type;
         this.tempStartPoint = null;
@@ -251,8 +253,16 @@ public class HandleFunctions {
 
             case PLACE_TABLE -> {
                 canvasReference.createTableAt(worldPos.x(), worldPos.y());
+
+                // Reseta a função lógica
                 setFunction(FunctionType.NONE);
                 canvasReference.getScene().setCursor(javafx.scene.Cursor.DEFAULT);
+
+                // --- NOVO: EXECUTA O GATILHO PARA AVISAR A DASHBOARD ---
+                if (onActionFinished != null) {
+                    onActionFinished.run();
+                    onActionFinished = null; // Limpa para não executar de novo sem querer
+                }
             }
 
             case MOVE_OBJECT -> {

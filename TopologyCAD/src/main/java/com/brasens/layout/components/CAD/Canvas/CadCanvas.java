@@ -62,6 +62,17 @@ public class CadCanvas extends Canvas {
 
     private static final List<TopoObject> CLIPBOARD = new ArrayList<>();
 
+    private enum ResizeHandle { NONE, RIGHT, BOTTOM, CORNER }
+    private ResizeHandle activeResizeHandle = ResizeHandle.NONE;
+    private com.brasens.model.objects.TopoTableObject resizingTable = null;
+    private Vector2D lastResizeMousePos = null;
+
+    private Color crossingSelectionColor = Color.GREEN;
+    private Color selectionColor = Color.ALICEBLUE;
+
+    private Color crossingSelectionFillColor = Color.rgb(0, 255, 55, 0.2);
+    private Color selectionFillColor = Color.rgb(0, 125, 255, 0.2);
+
     public CadCanvas(HandleFunctions functions) {
         super(100, 100);
         this.functions = functions;
@@ -328,8 +339,22 @@ public class CadCanvas extends Canvas {
             return;
         }
 
+        double currentScale = trans.getMxx();
+        if (currentScale == 0) currentScale = 1.0;
+
+        double targetPixelSize = 12.0;
+
+        double worldFontSize = targetPixelSize / currentScale;
+
+        double worldRowHeight = worldFontSize * 2.0;
+        double worldColWidth = worldFontSize * 6.0;
+
         com.brasens.model.objects.TopoTableObject table =
                 new com.brasens.model.objects.TopoTableObject(x, y, new ArrayList<>(allPoints));
+
+        table.setFontSize(worldFontSize);
+        table.setRowHeight(worldRowHeight);
+        table.setColWidth(worldColWidth);
 
         this.objects.add(table);
         redraw();
@@ -338,10 +363,12 @@ public class CadCanvas extends Canvas {
     public void redraw() {
         GraphicsContext gc = getGraphicsContext2D();
 
+        // 1. Limpeza e Fundo
         gc.setTransform(new Affine());
         gc.setFill(Color.rgb(30, 30, 30));
         gc.fillRect(0, 0, getWidth(), getHeight());
 
+        // 2. Aplica Zoom/Pan
         gc.setTransform(trans);
 
         if (showBackgroundGrid) {
@@ -353,12 +380,25 @@ public class CadCanvas extends Canvas {
         double fontSize = 12 / scale;
         double textOffset = 8 / scale;
 
+        // =================================================================
+        // LOOP 1: GEOMETRIA (LINHAS, POLILINHAS E TABELAS)
+        // =================================================================
         for (TopoObject obj : objects) {
             if (!isLayerVisible(obj.getLayerName())) continue;
 
+            // --- LÓGICA DE TABELA CORRIGIDA ---
             if (obj instanceof com.brasens.model.objects.TopoTableObject) {
-                drawTable(gc, (com.brasens.model.objects.TopoTableObject) obj, scale);
-                continue;
+                com.brasens.model.objects.TopoTableObject tbl = (com.brasens.model.objects.TopoTableObject) obj;
+
+                // Desenha a estrutura da tabela
+                drawTable(gc, tbl, scale);
+
+                // SE ESTIVER SELECIONADA, DESENHA OS GRIPS DE RESIZE
+                if (isObjectSelected(tbl)) {
+                    drawResizeHandles(gc, tbl, scale);
+                }
+
+                continue; // Pula o resto do loop para não tentar desenhar linhas/pontos neste objeto
             }
 
             if ("TEXT".equals(obj.getLayerName())) continue;
@@ -370,6 +410,7 @@ public class CadCanvas extends Canvas {
             TopoLineType style = obj.getType();
             boolean isSelected = isObjectSelected(obj);
 
+            // Estilo da linha
             if (isSelected) {
                 gc.setStroke(Color.ORANGERED);
                 gc.setLineWidth((style.getWidth() + 1.5) / scale);
@@ -378,6 +419,7 @@ public class CadCanvas extends Canvas {
                 gc.setLineWidth(style.getWidth() / scale);
             }
 
+            // Tracejado
             if (style.getDashArray() != null) {
                 double[] originalDashes = style.getDashArray();
                 double[] scaledDashes = new double[originalDashes.length];
@@ -389,6 +431,7 @@ public class CadCanvas extends Canvas {
                 gc.setLineDashes(null);
             }
 
+            // Desenha o caminho (Path)
             gc.beginPath();
             TopoPoint p0 = pts.get(0);
             gc.moveTo(p0.getX() - globalOffsetX, -(p0.getY() - globalOffsetY));
@@ -402,6 +445,7 @@ public class CadCanvas extends Canvas {
             gc.stroke();
             gc.setLineDashes(null);
 
+            // Rótulos de cota (Curva Mestra)
             if (style == TopoLineType.CURVA_MESTRA && pts.size() >= 2) {
                 TopoPoint p1 = pts.get(0);
                 TopoPoint p2 = pts.get(1);
@@ -414,6 +458,7 @@ public class CadCanvas extends Canvas {
             }
         }
 
+        // --- PREVIEW DA LINHA ELÁSTICA ---
         if ((functions.getFunctionSelected() == HandleFunctions.FunctionType.LINE
                 || functions.getFunctionSelected() == HandleFunctions.FunctionType.POLYLINE)
                 && functions.getTempStartPoint() != null
@@ -433,11 +478,15 @@ public class CadCanvas extends Canvas {
             gc.setLineDashes(null);
         }
 
+        // =================================================================
+        // LOOP 2: PONTOS E TEXTOS (RENDERIZADOS POR CIMA DAS LINHAS)
+        // =================================================================
         gc.setFont(javafx.scene.text.Font.font("Arial", fontSize));
 
         for (TopoObject obj : objects) {
             if (!isLayerVisible(obj.getLayerName())) continue;
 
+            // Tabelas já foram desenhadas no Loop 1
             if (obj instanceof com.brasens.model.objects.TopoTableObject) continue;
 
             boolean isTextLayer = "TEXT".equals(obj.getLayerName());
@@ -450,6 +499,7 @@ public class CadCanvas extends Canvas {
                 double drawY = -(p.getY() - globalOffsetY);
 
                 if (isTextLayer) {
+                    // Texto UI
                     if (p.isSelected()) gc.setFill(Color.ORANGERED);
                     else gc.setFill(Color.WHITE);
 
@@ -463,7 +513,7 @@ public class CadCanvas extends Canvas {
                         gc.strokeLine(drawX - s, drawY + s, drawX + s, drawY - s);
                     }
                 } else {
-
+                    // Pontos de Geometria
                     if (isContour) {
                         if (p.isSelected()) {
                             gc.setFill(Color.ORANGERED);
@@ -493,6 +543,9 @@ public class CadCanvas extends Canvas {
             }
         }
 
+        // =================================================================
+        // DESENHO DA CAIXA DE SELEÇÃO (WINDOW / CROSSING)
+        // =================================================================
         if (functions.isSelectingBox() && functions.getSelectionStartScreenPoint() != null && functions.getSelectionCurrentScreenPoint() != null) {
             gc.setTransform(new Affine()); // Reseta para coordenadas de tela
 
@@ -508,14 +561,14 @@ public class CadCanvas extends Canvas {
 
             if (isCrossing) {
                 // CROSSING (Verde, Tracejado)
-                gc.setFill(Color.rgb(0, 255, 0, 0.2)); // Verde transparente
-                gc.setStroke(Color.GREEN);
-                gc.setLineDashes(5, 5); // Tracejado
+                gc.setFill(crossingSelectionFillColor);
+                gc.setStroke(crossingSelectionColor);
+                gc.setLineDashes(5, 5);
             } else {
                 // WINDOW (Azul, Sólido)
-                gc.setFill(Color.rgb(0, 0, 255, 0.2)); // Azul transparente
-                gc.setStroke(Color.BLUE);
-                gc.setLineDashes(null); // Sólido
+                gc.setFill(selectionFillColor);
+                gc.setStroke(selectionColor);
+                gc.setLineDashes(null);
             }
 
             gc.setLineWidth(1);
@@ -523,6 +576,9 @@ public class CadCanvas extends Canvas {
             gc.strokeRect(x, y, w, h);
         }
 
+        // =================================================================
+        // HUD (ROSA DOS VENTOS)
+        // =================================================================
         if (isLayerVisible("ROSA_VENTOS") && compassImage != null) {
             gc.setTransform(new Affine()); // Reseta para tela
 
@@ -539,6 +595,70 @@ public class CadCanvas extends Canvas {
             gc.drawImage(compassImage, 0, 0, COMPASS_SIZE, COMPASS_SIZE);
             gc.restore();
         }
+    }
+
+    private void drawResizeHandles(GraphicsContext gc, com.brasens.model.objects.TopoTableObject table, double scale) {
+        TopoPoint origin = table.getPoints().get(0);
+
+        // Coordenadas de desenho (Tela)
+        double startX = origin.getX() - globalOffsetX;
+        double startY = -(origin.getY() - globalOffsetY);
+
+        double totalW = table.getTotalWidth();
+        double totalH = table.getTotalHeight();
+
+        // Tamanho fixo na tela (10px), independente do zoom
+        double gripSize = 10.0 / scale;
+
+        gc.setFill(Color.CYAN); // Cor interna bem visível
+        gc.setStroke(Color.BLUE); // Borda
+        gc.setLineWidth(1.5 / scale); // Borda um pouco mais grossa
+
+        // 1. Grip DIREITA
+        double rx = startX + totalW;
+        double ry = startY + (totalH / 2);
+        drawGripCircle(gc, rx, ry, gripSize);
+
+        // 2. Grip BAIXO
+        double bx = startX + (totalW / 2);
+        double by = startY + totalH;
+        drawGripCircle(gc, bx, by, gripSize);
+
+        // 3. Grip CANTO
+        double cx = startX + totalW;
+        double cy = startY + totalH;
+        drawGripCircle(gc, cx, cy, gripSize);
+    }
+
+    private void drawGripCircle(GraphicsContext gc, double centerX, double centerY, double size) {
+        gc.fillOval(centerX - size/2, centerY - size/2, size, size);
+        gc.strokeOval(centerX - size/2, centerY - size/2, size, size);
+    }
+
+    private com.brasens.model.objects.TopoTableObject findTableAtScreenPos(double screenX, double screenY) {
+        for (TopoObject obj : objects) {
+            if (obj instanceof com.brasens.model.objects.TopoTableObject) {
+                com.brasens.model.objects.TopoTableObject tbl = (com.brasens.model.objects.TopoTableObject) obj;
+                if (!isLayerVisible(tbl.getLayerName())) continue;
+
+                TopoPoint origin = tbl.getPoints().get(0);
+
+                // Converte a origem da tabela para Tela
+                Vector2D screenOrigin = worldToScreen(origin.getX(), origin.getY());
+
+                // Calcula largura e altura em pixels (Tela)
+                double scale = trans.getMxx();
+                double w = tbl.getTotalWidth() * scale;
+                double h = tbl.getTotalHeight() * scale;
+
+                // Verifica se o mouse está dentro do retângulo da tabela
+                if (screenX >= screenOrigin.x() && screenX <= screenOrigin.x() + w &&
+                        screenY >= screenOrigin.y() && screenY <= screenOrigin.y() + h) {
+                    return tbl;
+                }
+            }
+        }
+        return null;
     }
 
     private void performWindowSelection() {
@@ -1137,25 +1257,32 @@ public class CadCanvas extends Canvas {
         lastMouseX = e.getX();
         lastMouseY = e.getY();
 
-        if (contextMenu != null) {
-            contextMenu.hide();
+        if (contextMenu != null) contextMenu.hide();
+
+        // 1. Verifica se clicou numa bolinha de resize (Prioridade)
+        ResizeHandle handle = checkResizeHandles(e.getX(), e.getY());
+        if (handle != ResizeHandle.NONE) {
+            this.activeResizeHandle = handle;
+            this.lastResizeMousePos = screenToWorld(e.getX(), e.getY());
+            return;
         }
 
+        // 2. Menu de Contexto
         if (e.getButton() == MouseButton.SECONDARY) {
             TopoPoint hitPoint = findPointNear(e.getX(), e.getY(), 10.0);
             TopoObject hitObj = null;
-
             if (hitPoint != null) {
                 hitObj = findParentElement(hitPoint);
+            } else {
+                // Se não achou ponto, vê se clicou numa tabela para mostrar menu dela
+                hitObj = findTableAtScreenPos(e.getX(), e.getY());
             }
-
             showContextMenu(e, hitObj);
             return;
         }
 
         functions.updateMousePosition(e.getX(), e.getY());
         functions.startDrag();
-
         startDragX = e.getX();
         startDragY = e.getY();
         isDraggingConfirmed = false;
@@ -1163,49 +1290,49 @@ public class CadCanvas extends Canvas {
         TopoPoint hitPoint = findPointNear(e.getX(), e.getY(), 10.0);
 
         if (functions.getFunctionSelected() == HandleFunctions.FunctionType.NONE) {
-
             if (hitPoint != null) {
+                // CLICOU EM PONTO
                 functions.setPointBeingDragged(hitPoint);
-
                 if (!hitPoint.isSelected()) {
-                    if (!e.isControlDown() && !e.isShiftDown()) {
-                        clearSelection();
-                    }
+                    if (!e.isControlDown() && !e.isShiftDown()) clearSelection();
                     hitPoint.setSelected(true);
                 }
-
-                if (onSelectionChanged != null) {
-                    onSelectionChanged.accept(hitPoint);
-                }
-
+                if (onSelectionChanged != null) onSelectionChanged.accept(hitPoint);
                 redraw();
                 return;
             } else {
-                if (!e.isControlDown() && !e.isShiftDown()) {
-                    clearSelection();
+                // NÃO CLICOU EM PONTO -> Tenta Tabela ou Seleção por Caixa
+
+                // --- NOVO: Verifica se clicou no corpo de uma Tabela ---
+                com.brasens.model.objects.TopoTableObject hitTable = findTableAtScreenPos(e.getX(), e.getY());
+
+                if (hitTable != null) {
+                    // Seleciona a tabela inteira
+                    if (!e.isControlDown() && !e.isShiftDown()) clearSelection();
+
+                    // Marca todos os pontos da tabela como selecionados (para ativar o isObjectSelected)
+                    for(TopoPoint p : hitTable.getPoints()) p.setSelected(true);
+
+                    redraw(); // Isso vai disparar o drawResizeHandles
+                    return;
                 }
 
+                // --- Se não clicou em nada, inicia Seleção por Caixa ---
+                if (!e.isControlDown() && !e.isShiftDown()) clearSelection();
                 functions.setSelectingBox(true);
                 functions.setSelectionStartScreenPoint(new Vector2D(e.getX(), e.getY()));
                 functions.setSelectionCurrentScreenPoint(new Vector2D(e.getX(), e.getY()));
-
-                if (onSelectionChanged != null) {
-                    onSelectionChanged.accept(null);
-                }
-
+                if (onSelectionChanged != null) onSelectionChanged.accept(null);
                 redraw();
                 return;
             }
         }
 
+        // ... Logica de double click mantida ...
         double dTime = (System.nanoTime() - clickTime) / 1e6;
         clickTime = System.nanoTime();
-
-        if (dTime < 250) {
-            functions.handleDoubleClick(new Vector2D(lastMouseX, lastMouseY), this);
-        } else {
-            functions.handleClick(new Vector2D(lastMouseX, lastMouseY), this);
-        }
+        if (dTime < 250) functions.handleDoubleClick(new Vector2D(lastMouseX, lastMouseY), this);
+        else functions.handleClick(new Vector2D(lastMouseX, lastMouseY), this);
     }
 
     private TopoObject findParentElement(TopoPoint p) {
@@ -1217,7 +1344,70 @@ public class CadCanvas extends Canvas {
         return null;
     }
 
+    private ResizeHandle checkResizeHandles(double mouseX, double mouseY) {
+        // Tolerância em PIXELS (área de clique confortável)
+        double tolerance = 10.0;
+
+        for (TopoObject obj : objects) {
+            // Só verifica objetos que são Tabela E estão selecionados
+            if (obj instanceof com.brasens.model.objects.TopoTableObject && isObjectSelected(obj)) {
+                com.brasens.model.objects.TopoTableObject table = (com.brasens.model.objects.TopoTableObject) obj;
+
+                TopoPoint origin = table.getPoints().get(0);
+
+                // Converte origem da tabela (Mundo) para Tela
+                Vector2D screenOrigin = worldToScreen(origin.getX(), origin.getY());
+
+                // Calcula dimensões na tela baseadas no zoom atual
+                double scale = trans.getMxx();
+                double screenW = table.getTotalWidth() * scale;
+                double screenH = table.getTotalHeight() * scale;
+
+                double xBase = screenOrigin.x();
+                double yBase = screenOrigin.y();
+
+                // --- Coordenadas dos Grips na Tela ---
+
+                // 1. Direita (Middle Right)
+                double rx = xBase + screenW;
+                double ry = yBase + (screenH / 2);
+                if (getDistance(mouseX, mouseY, rx, ry) <= tolerance) {
+                    this.resizingTable = table;
+                    return ResizeHandle.RIGHT;
+                }
+
+                // 2. Baixo (Bottom Center)
+                double bx = xBase + (screenW / 2);
+                double by = yBase + screenH;
+                if (getDistance(mouseX, mouseY, bx, by) <= tolerance) {
+                    this.resizingTable = table;
+                    return ResizeHandle.BOTTOM;
+                }
+
+                // 3. Canto (Bottom Right)
+                double cx = xBase + screenW;
+                double cy = yBase + screenH;
+                if (getDistance(mouseX, mouseY, cx, cy) <= tolerance) {
+                    this.resizingTable = table;
+                    return ResizeHandle.CORNER;
+                }
+            }
+        }
+        return ResizeHandle.NONE;
+    }
+
+    private double getDistance(double x1, double y1, double x2, double y2) {
+        return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+    }
+
     private void handleMouseReleased(MouseEvent e) {
+        if (activeResizeHandle != ResizeHandle.NONE) {
+            activeResizeHandle = ResizeHandle.NONE;
+            resizingTable = null;
+            lastResizeMousePos = null;
+            return;
+        }
+
         if (functions.getPointBeingDragged() != null) {
             System.out.println("Moveu ponto para: " + functions.getPointBeingDragged().getX() + ", " + functions.getPointBeingDragged().getY());
 
@@ -1242,12 +1432,59 @@ public class CadCanvas extends Canvas {
     private void handleMouseDragged(MouseEvent e) {
         functions.updateMousePosition(e.getX(), e.getY());
 
+        // --- 0. NOVO: LÓGICA DE REDIMENSIONAMENTO DE TABELA ---
+        // Se uma alça estiver ativa, calcula o novo tamanho e encerra
+        if (activeResizeHandle != ResizeHandle.NONE && resizingTable != null) {
+            Vector2D currentWorldPos = screenToWorld(e.getX(), e.getY());
+
+            TopoPoint origin = resizingTable.getPoints().get(0);
+
+            // Calcula distâncias no Mundo
+            double distX = currentWorldPos.x() - origin.getX();
+            // Inverte Y pois o mouse desce na tela (Y aumenta), mas no mundo Topo Y diminui
+            double distY = origin.getY() - currentWorldPos.y();
+
+            // Travas de segurança (mínimo de 1 metro)
+            if (distX < 1.0) distX = 1.0;
+            if (distY < 1.0) distY = 1.0;
+
+            switch (activeResizeHandle) {
+                case RIGHT: // Altera Largura da Coluna
+                    // Largura = Distância X / Número de Colunas
+                    double newColW = distX / resizingTable.getHeaders().length;
+                    resizingTable.setColWidth(newColW);
+                    break;
+
+                case BOTTOM: // Altera Altura da Linha
+                    // Altura = Distância Y / (Dados + Cabeçalho)
+                    double newRowH = distY / (resizingTable.getDataPoints().size() + 1);
+                    resizingTable.setRowHeight(newRowH);
+                    break;
+
+                case CORNER: // Escala Geral (Proporcional)
+                    // Usa a altura como base para tudo
+                    double totalRows = resizingTable.getDataPoints().size() + 1;
+                    double masterH = distY / totalRows;
+
+                    resizingTable.setRowHeight(masterH);
+                    // Mantém a proporção visual: Fonte = 50% da linha, Coluna = 400% da linha
+                    resizingTable.setFontSize(masterH * 0.5);
+                    resizingTable.setColWidth(masterH * 4.0);
+                    break;
+            }
+
+            redraw();
+            return; // Interrompe para não processar outros arrastes
+        }
+
+        // --- 1. SELEÇÃO POR CAIXA (WINDOW/CROSSING) ---
         if (functions.isSelectingBox()) {
             functions.setSelectionCurrentScreenPoint(new Vector2D(e.getX(), e.getY()));
             redraw(); // Redesenha a caixa azul/verde
             return; // Importante: não faz pan nem arrasta pontos
         }
 
+        // --- 2. ARRASTAR PONTO EXISTENTE ---
         if (functions.getPointBeingDragged() != null && functions.getFunctionSelected() == HandleFunctions.FunctionType.NONE) {
             Vector2D worldPos = screenToWorld(e.getX(), e.getY());
 
@@ -1274,6 +1511,7 @@ public class CadCanvas extends Canvas {
             return;
         }
 
+        // --- 3. PAN (MOVER A TELA) ---
         if (e.getButton() == MouseButton.MIDDLE || e.getButton() == MouseButton.PRIMARY) {
             double dx = e.getX() - lastMouseX;
             double dy = e.getY() - lastMouseY;

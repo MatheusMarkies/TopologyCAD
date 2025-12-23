@@ -27,6 +27,7 @@ import javafx.event.EventHandler;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.geometry.Side;
+import javafx.scene.Cursor;
 import javafx.scene.control.*;
 import javafx.scene.effect.DropShadow;
 import javafx.scene.image.Image;
@@ -892,23 +893,33 @@ public class DashboardView extends Page {
         }
     }
 
-    public void handleAddTable(){
+    public void handleAddTable() {
         List<TopoPoint> points = cadCanvas.getAllPoints();
         if (points.isEmpty()) {
             showAlert("Aviso", "Não há pontos para gerar a tabela.");
             return;
         }
 
-        TopoPoint ref = points.get(0);
-        double startX = ref.getX() + 20;
-        double startY = ref.getY();
+        if (btnTable.isActive()) {
+            btnTable.setActive(false);
+            functions.setFunction(HandleFunctions.FunctionType.NONE);
+            if (cadCanvas.getScene() != null) cadCanvas.getScene().setCursor(Cursor.DEFAULT);
+            functions.setOnActionFinished(null); // Remove gatilho pendente
 
-        com.brasens.model.objects.TopoTableObject tabela =
-                new com.brasens.model.objects.TopoTableObject(startX, startY, new ArrayList<>(points));
+        } else {
+            selectTool(btnTable, HandleFunctions.FunctionType.PLACE_TABLE);
 
-        cadCanvas.getObjects().add(tabela);
-        cadCanvas.redraw();
-        System.out.println("Tabela inserida no Canvas.");
+            if (cadCanvas.getScene() != null) {
+                cadCanvas.getScene().setCursor(javafx.scene.Cursor.CROSSHAIR);
+            }
+
+            functions.setOnActionFinished(() -> {
+                btnTable.setActive(false);
+                System.out.println("Tabela inserida e ferramenta desativada.");
+            });
+
+            System.out.println("Ferramenta Tabela selecionada. Aguardando clique no Canvas...");
+        }
     }
 
     public void handleShowGrid(){
