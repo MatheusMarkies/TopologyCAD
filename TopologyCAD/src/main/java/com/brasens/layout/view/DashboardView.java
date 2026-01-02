@@ -13,14 +13,14 @@ import com.brasens.layout.components.PropertiesSidebar;
 import com.brasens.layout.components.cells.CoordinateRow;
 import com.brasens.layout.controller.DashboardController;
 import com.brasens.model.io.ProjectSaveState;
-import com.brasens.model.report.ProjectData;
 import com.brasens.model.objects.TopoObject;
 import com.brasens.model.objects.TopoPoint;
+import com.brasens.model.report.ProjectData;
 import com.brasens.utilities.math.ContourGenerator;
 import com.brasens.utilities.math.CoordinateConversion;
+import com.brasens.utilities.math.ScaleCalculator;
 import com.brasens.utilities.math.TopologyMath;
 import com.brasens.utils.Page;
-import com.brasens.utilities.math.ScaleCalculator;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.event.EventHandler;
@@ -60,6 +60,7 @@ public class DashboardView extends Page {
     private CustomButton btnPan;
     private CustomButton btnLine;
     private CustomButton btnPolyline;
+    private CustomButton btnJoin;
     private CustomButton btnUIText;
     private CustomButton btnZoomExtents;
     private CustomButton btnShowCoordinatesTable;
@@ -67,6 +68,12 @@ public class DashboardView extends Page {
     private CustomButton btnLayers;
     private CustomButton btnContour;
     private CustomButton btnToggleGrid;
+
+    private CustomButton btnDimArea;
+    private CustomButton btnDimSegments;
+    private CustomButton btnDimAngle;
+
+    private CustomButton btnDivideArea;
 
     BorderPane layout = new BorderPane();
 
@@ -138,14 +145,7 @@ public class DashboardView extends Page {
         canvasContainer.widthProperty().addListener(o -> cadCanvas.redraw());
         canvasContainer.heightProperty().addListener(o -> cadCanvas.redraw());
 
-        cadCanvas.setOnSelectionChanged(point -> {
-            if (point == null) {
-                infoOverlay.setVisible(false);
-            } else {
-                updateInfoOverlay(point);
-                infoOverlay.setVisible(true);
-            }
-        });
+        cadCanvas.setOnSelectionChanged(this::handleSelectionUpdate);
 
         layout.setCenter(canvasContainer);
 
@@ -763,6 +763,46 @@ public class DashboardView extends Page {
         return toolBar;
     }
 
+    private void handleSelectionUpdate(TopoPoint point) {
+        // Atualiza o overlay flutuante (comportamento antigo)
+        if (point == null) {
+            infoOverlay.setVisible(false);
+        } else {
+            updateInfoOverlay(point);
+            infoOverlay.setVisible(true);
+        }
+
+        // Nova Lógica: Tenta encontrar um objeto selecionado para atualizar as métricas
+        TopoObject selectedObj = null;
+        int selectedCount = 0;
+
+        // Varre os objetos para ver qual está "selecionado" (pelo menos 1 ponto selecionado)
+        for (TopoObject obj : cadCanvas.getObjects()) {
+            boolean isObjSelected = false;
+            if (!obj.getPoints().isEmpty()) {
+                // Se o primeiro ponto estiver selecionado, assumimos que o objeto está em foco
+                // (Melhoria futura: verificar se todos estão selecionados)
+                if (obj.getPoints().get(0).isSelected()) {
+                    isObjSelected = true;
+                }
+            }
+
+            if (isObjSelected && obj.isClosed()) {
+                selectedObj = obj;
+                selectedCount++;
+            }
+        }
+
+        if (selectedCount == 1 && selectedObj != null) {
+            updateCoordinatesTable(selectedObj.getPoints());
+        }
+        else if (selectedCount == 0) {
+            if (point == null) {
+                updateCoordinatesTable(new ArrayList<>());
+            }
+        }
+    }
+
     public void handleShowLayers(){
         ContextMenu layerMenu = new ContextMenu();
 
@@ -893,33 +933,255 @@ public class DashboardView extends Page {
         }
     }
 
+    public void handleJoinObjects() {
+        // 1. Identifica objetos selecionados
+        List<TopoObject> selectedObjects = new ArrayList<>();
+
+        for (TopoObject obj : cadCanvas.getObjects()) {
+            if (!obj.getPoints().isEmpty() && obj.getPoints().get(0).isSelected()) {
+                selectedObjects.add(obj);
+            }
+        }
+
+        if (selectedObjects.size() < 2) {
+            showAlert("Aviso", "Selecione pelo menos 2 linhas conectadas para unir.");
+            return;
+        }
+
+        // 2. Executa a união
+        List<TopoObject> joinedResult = com.brasens.utilities.math.GeometryUtils.joinObjects(selectedObjects);
+
+        // 3. Atualiza o Canvas
+        // Remove os pedaços velhos
+        List<TopoObject> canvasList = new ArrayList<>(cadCanvas.getObjects()); // Cópia segura
+        canvasList.removeAll(selectedObjects);
+
+        // Adiciona os novos unidos
+        canvasList.addAll(joinedResult);
+
+        cadCanvas.setObjects(canvasList);
+        cadCanvas.clearSelection();
+        cadCanvas.redraw();
+
+        // 4. Feedback
+        int reduced = selectedObjects.size() - joinedResult.size();
+        System.out.println("União concluída. " + selectedObjects.size() + " objetos viraram " + joinedResult.size() + ".");
+
+        // Se resultou em um polígono fechado único, atualiza a barra lateral
+        if (joinedResult.size() == 1 && joinedResult.get(0).isClosed()) {
+            updateCoordinatesTable(joinedResult.get(0).getPoints());
+            System.out.println("Objeto fechado detectado! Área calculada.");
+        }
+    }
+
+    public void handleDivideArea() {
+        // 1. Verifica se tem UM polígono selecionado
+        TopoObject tempPoly = null;
+        int count = 0;
+
+        for(TopoObject obj : cadCanvas.getObjects()) {
+            boolean isSel = false;
+            if (!obj.getPoints().isEmpty() && obj.getPoints().get(0).isSelected()) {
+                isSel = true;
+            }
+
+            if (isSel && obj.isClosed()) {
+                tempPoly = obj;
+                count++;
+            }
+        }
+
+        if (count != 1 || tempPoly == null) {
+            showAlert("Seleção Inválida", "Selecione exatamente UM polígono fechado antes de clicar na ferramenta.");
+            return;
+        }
+
+        final TopoObject selectedPoly = tempPoly;
+
+        // 2. Diálogo
+        Dialog<javafx.util.Pair<Double, Double>> dialog = new Dialog<>();
+        dialog.setTitle("Divisão de Área");
+        dialog.setHeaderText("Configurar Divisão da Gleba");
+
+        ButtonType loginButtonType = new ButtonType("Dividir", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().addAll(loginButtonType, ButtonType.CANCEL);
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(20, 150, 10, 10));
+
+        TextField areaField = new TextField();
+        areaField.setPromptText("Ex: 2.5000");
+        TextField azimuthField = new TextField();
+        azimuthField.setPromptText("Ex: 90.0");
+
+        grid.add(new Label("Área Desejada (ha):"), 0, 0);
+        grid.add(areaField, 1, 0);
+        grid.add(new Label("Azimute da Linha de Corte (Graus):"), 0, 1);
+        grid.add(azimuthField, 1, 1);
+
+        dialog.getDialogPane().setContent(grid);
+
+        dialog.setResultConverter(dialogButton -> {
+            if (dialogButton == loginButtonType) {
+                try {
+                    double area = Double.parseDouble(areaField.getText().replace(",", "."));
+                    double az = Double.parseDouble(azimuthField.getText().replace(",", "."));
+                    return new javafx.util.Pair<>(area, az);
+                } catch (NumberFormatException e) {
+                    return null;
+                }
+            }
+            return null;
+        });
+
+        Optional<javafx.util.Pair<Double, Double>> result = dialog.showAndWait();
+
+        result.ifPresent(pair -> {
+            double targetArea = pair.getKey();
+            double azimuth = pair.getValue();
+
+            System.out.println("Dividindo área de " + selectedPoly.getAreaHa() + "ha. Alvo: " + targetArea + "ha. Az: " + azimuth);
+
+            // 3. Chama o Motor Matemático
+            List<TopoObject> newPolys = com.brasens.utilities.math.AreaDivider.dividePolygon(selectedPoly, targetArea, azimuth);
+
+            if (!newPolys.isEmpty()) {
+                // Cria cópia da lista atual
+                List<TopoObject> newList = new ArrayList<>(cadCanvas.getObjects());
+                newList.remove(selectedPoly);
+
+                // Adiciona os novos polígonos validando se são PERIMETRO
+                for (TopoObject poly : newPolys) {
+                    poly.validatePerimeter(); // <--- APLICA A REGRA AQUI
+                    newList.add(poly);
+                }
+
+                cadCanvas.setObjects(newList);
+
+                cadCanvas.clearSelection();
+                cadCanvas.redraw();
+
+                // Seleciona o primeiro pedaço para atualizar a UI
+                if (newPolys.get(0).getPoints().size() > 0) {
+                    updateCoordinatesTable(newPolys.get(0).getPoints());
+                }
+
+                System.out.println("Divisão concluída com sucesso!");
+            } else {
+                showAlert("Erro na Divisão", "Não foi possível dividir a área com estes parâmetros.\nVerifique se a área alvo é menor que a total.");
+            }
+        });
+
+        btnDivideArea.setActive(false);
+    }
+
     public void handleAddTable() {
-        List<TopoPoint> points = cadCanvas.getAllPoints();
-        if (points.isEmpty()) {
-            showAlert("Aviso", "Não há pontos para gerar a tabela.");
+        // 1. Verificação Primária: Tem algum ponto no desenho?
+        List<TopoPoint> allPoints = cadCanvas.getAllPoints();
+        if (allPoints.isEmpty()) {
+            showAlert("Aviso", "Não há pontos no desenho para gerar uma tabela.");
             return;
         }
 
         if (btnTable.isActive()) {
+            // Desativa se já estiver ativo
             btnTable.setActive(false);
             functions.setFunction(HandleFunctions.FunctionType.NONE);
             if (cadCanvas.getScene() != null) cadCanvas.getScene().setCursor(Cursor.DEFAULT);
-            functions.setOnActionFinished(null); // Remove gatilho pendente
+            functions.setOnActionFinished(null);
 
         } else {
-            selectTool(btnTable, HandleFunctions.FunctionType.PLACE_TABLE);
+            // 2. Pergunta ao usuário
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Inserir Tabela");
+            alert.setHeaderText("Escolha o modelo de tabela:");
 
+            // Verifica se o memorial é possível (tem perímetro calculado?)
+            boolean hasMemorialData = !coordinateTableView.getItems().isEmpty();
+
+            String contentText = "Pontos disponíveis: " + allPoints.size();
+            if (!hasMemorialData) {
+                contentText += "\n(Memorial indisponível: Desenhe um perímetro primeiro)";
+            }
+            alert.setContentText(contentText);
+
+            ButtonType btnSimples = new ButtonType("Coordenadas (XYZ)");
+            ButtonType btnMemorial = new ButtonType("Memorial Descritivo");
+            ButtonType btnCancelar = new ButtonType("Cancelar", ButtonBar.ButtonData.CANCEL_CLOSE);
+
+            alert.getButtonTypes().setAll(btnSimples, btnMemorial, btnCancelar);
+
+            // Desabilita o botão Memorial se não houver dados calculados
+            alert.getDialogPane().lookupButton(btnMemorial).setDisable(!hasMemorialData);
+
+            Optional<ButtonType> result = alert.showAndWait();
+
+            if (result.isEmpty() || result.get() == btnCancelar) {
+                return;
+            }
+
+            // 3. Configura a ferramenta
+            selectTool(btnTable, HandleFunctions.FunctionType.PLACE_TABLE);
             if (cadCanvas.getScene() != null) {
                 cadCanvas.getScene().setCursor(javafx.scene.Cursor.CROSSHAIR);
             }
 
-            functions.setOnActionFinished(() -> {
-                btnTable.setActive(false);
-                System.out.println("Tabela inserida e ferramenta desativada.");
-            });
+            boolean isMemorial = (result.get() == btnMemorial);
 
-            System.out.println("Ferramenta Tabela selecionada. Aguardando clique no Canvas...");
+            // 4. Define o que acontece ao clicar na tela
+            functions.setOnActionFinished(() -> {
+                // Pega a tabela que acabou de ser criada (vazia) no Canvas
+                int lastIdx = cadCanvas.getObjects().size() - 1;
+
+                if (lastIdx >= 0 && cadCanvas.getObjects().get(lastIdx) instanceof com.brasens.model.objects.TopoTableObject) {
+
+                    com.brasens.model.objects.TopoTableObject tableObj =
+                            (com.brasens.model.objects.TopoTableObject) cadCanvas.getObjects().get(lastIdx);
+
+                    if (isMemorial) {
+                        configureMemorialTable(tableObj);
+                    } else {
+                        // RE-OBTÉM os pontos no momento do clique para garantir
+                        configureSimpleTable(tableObj);
+                    }
+
+                    cadCanvas.redraw();
+                }
+
+                btnTable.setActive(false);
+                System.out.println("Tabela inserida com sucesso.");
+            });
         }
+    }
+
+    private void configureMemorialTable(com.brasens.model.objects.TopoTableObject table) {
+        String[] headers = {"VÉRTICE", "AZIMUTE", "DISTÂNCIA", "COORD. ESTE (X)", "COORD. NORTE (Y)", "CONFRONTANTE"};
+        List<String[]> rows = new ArrayList<>();
+
+        ObservableList<CoordinateRow> data = coordinateTableView.getItems();
+
+        for (CoordinateRow item : data) {
+            String[] row = new String[6];
+            row[0] = item.deProperty().get();          // Vértice (De)
+            row[1] = item.azimuteProperty().get();     // Azimute
+            row[2] = item.distanciaProperty().get();   // Distância
+            row[3] = item.coordEProperty().get();      // X
+            row[4] = item.coordNProperty().get();      // Y
+            row[5] = " - ";                            // Confrontante (Placeholder, editável depois)
+
+            rows.add(row);
+        }
+
+        table.setCustomData(headers, rows);
+        table.setColWidth(25.0); // Colunas um pouco mais largas para caber Azimute
+    }
+
+    private void configureSimpleTable(com.brasens.model.objects.TopoTableObject table) {
+        // Pega os dados mais recentes do Canvas
+        List<TopoPoint> points = cadCanvas.getAllPoints();
+        table.updateDataFromPoints(points);
     }
 
     public void handleShowGrid(){
@@ -1031,6 +1293,16 @@ public class DashboardView extends Page {
             selectTool(btnPolyline, HandleFunctions.FunctionType.POLYLINE);
         });
 
+        btnJoin = new CustomButton("",
+                new Image(CAD.class.getResource("/mspm/icons/broken-link.png").toString()), // Ícone sugerido: nodes ou algo que lembre união
+                "",
+                btnImageSize
+        );
+        btnJoin.setAnimation(colorDefault, colorHover, colorActive, 200, false); // False = Click único, não toggle
+        btnJoin.setOnMouseClicked(e -> {
+            handleJoinObjects();
+        });
+
         btnUIText = new CustomButton("",
                 new Image(CAD.class.getResource("/mspm/icons/text.png").toString()),
                 "",
@@ -1099,6 +1371,77 @@ public class DashboardView extends Page {
             handleShowGrid();
         });
 
+        btnDimArea = new CustomButton("",
+                new Image(CAD.class.getResource("/mspm/icons/area.png").toString()),
+                "",
+                btnImageSize
+        );
+        btnDimArea.setAnimation(colorDefault, colorHover, colorActive, 200, true);
+        btnDimArea.setOnMouseClicked(e -> {
+            selectTool(btnDimArea, HandleFunctions.FunctionType.DIMENSION_AREA);
+
+            // Configura o reset automático após o uso
+            functions.setOnActionFinished(() -> {
+                btnDimArea.setActive(false);
+                functions.setFunction(HandleFunctions.FunctionType.NONE);
+                System.out.println("Ferramenta Área finalizada.");
+            });
+
+            System.out.println("Ferramenta Cotar Área Selecionada. Clique na borda de um polígono.");
+        });
+
+        btnDimSegments = new CustomButton("",
+                new Image(CAD.class.getResource("/mspm/icons/measure.png").toString()),
+                "",
+                btnImageSize
+        );
+        btnDimSegments.setAnimation(colorDefault, colorHover, colorActive, 200, true);
+        btnDimSegments.setOnMouseClicked(e -> {
+            selectTool(btnDimSegments, HandleFunctions.FunctionType.DIMENSION_SEGMENTS);
+
+            // Configura o reset automático após o uso
+            functions.setOnActionFinished(() -> {
+                btnDimSegments.setActive(false);
+                functions.setFunction(HandleFunctions.FunctionType.NONE);
+                System.out.println("Ferramenta Segmentos finalizada.");
+            });
+
+            System.out.println("Ferramenta Cotar Segmentos Selecionada. Clique em uma linha/polígono.");
+        });
+
+        btnDimAngle = new CustomButton("",
+                new Image(CAD.class.getResource("/mspm/icons/angle.png").toString()),
+                "",
+                btnImageSize
+        );
+        btnDimAngle.setAnimation(colorDefault, colorHover, colorActive, 200, true);
+        btnDimAngle.setOnMouseClicked(e -> {
+            selectTool(btnDimAngle, HandleFunctions.FunctionType.DIMENSION_ANGLE);
+
+            // Configura o reset automático após o uso
+            functions.setOnActionFinished(() -> {
+                btnDimAngle.setActive(false);
+                functions.setFunction(HandleFunctions.FunctionType.NONE);
+                System.out.println("Ferramenta Ângulo finalizada.");
+            });
+
+            // Reseta variáveis de estado
+            functions.setAngleStep(0);
+            functions.setAngleVertex(null);
+            functions.setAngleP1(null);
+            System.out.println("Ferramenta Ângulo: Clique num vértice (Auto) ou no Vazio (Manual).");
+        });
+
+        btnDivideArea = new CustomButton("",
+                new Image(CAD.class.getResource("/mspm/icons/divided.png").toString()),
+                "",
+                btnImageSize
+        );
+        btnDimAngle.setAnimation(colorDefault, colorHover, colorActive, 200, true);
+        btnDivideArea.setOnMouseClicked(e -> {
+            handleDivideArea();
+        });
+
         toolBar.getItems().addAll(
                 btnImport, btnSave,
 
@@ -1106,13 +1449,22 @@ public class DashboardView extends Page {
                 btnPan, btnZoomExtents,
 
                 new Separator(Orientation.VERTICAL),
-                btnLine, btnPolyline, btnUIText,
+                btnLine, btnPolyline, btnJoin, btnUIText,
 
                 new Separator(Orientation.VERTICAL),
                 btnShowCoordinatesTable, btnTable,
 
                 new Separator(Orientation.VERTICAL),
-                btnLayers, btnContour, btnToggleGrid
+                btnLayers, btnToggleGrid,
+
+                new Separator(Orientation.VERTICAL),
+                btnContour,
+
+                new Separator(Orientation.VERTICAL),
+                btnDimArea, btnDimSegments, btnDimAngle,
+
+                new Separator(Orientation.VERTICAL),
+                btnDivideArea
         );
 
         return toolBar;

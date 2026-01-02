@@ -33,7 +33,7 @@ public class HandleFunctions {
     private boolean edgePanEnabled = false;
 
     public enum FunctionType {
-        NONE, EDGEPAN, LINE, POLYLINE, TEXT, PLACE_TABLE, MOVE_OBJECT
+        NONE, EDGEPAN, LINE, POLYLINE, TEXT, PLACE_TABLE, MOVE_OBJECT, DIMENSION_AREA, DIMENSION_SEGMENTS, DIMENSION_ANGLE
     }
 
     private FunctionType functionSelected = FunctionType.NONE;
@@ -51,6 +51,10 @@ public class HandleFunctions {
     private Vector2D selectionCurrentScreenPoint = null;
 
     private Runnable onActionFinished;
+
+    private int angleStep = 0;
+    private TopoPoint angleVertex = null;
+    private TopoPoint angleP1 = null;
 
     public void setFunction(FunctionType type) {
         this.functionSelected = type;
@@ -271,6 +275,17 @@ public class HandleFunctions {
                 this.moveReferencePoint = null;
                 setFunction(FunctionType.NONE);
                 canvasReference.redraw();
+            }
+
+            case DIMENSION_AREA -> {
+                canvasReference.handleDimensionArea(pointer.x(), pointer.y());
+            }
+
+            case DIMENSION_SEGMENTS -> {
+                canvasReference.handleDimensionSegments(pointer.x(), pointer.y());
+            }
+            case DIMENSION_ANGLE -> {
+                canvasReference.handleDimensionAngleClick(pointer.x(), pointer.y());
             }
         }
     }

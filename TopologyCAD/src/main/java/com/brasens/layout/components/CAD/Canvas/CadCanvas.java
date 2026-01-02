@@ -85,8 +85,14 @@ public class CadCanvas extends Canvas {
         this.setOnMouseMoved(e -> {
             functions.updateMousePosition(e.getX(), e.getY());
             functions.handleMouseMove(new Vector2D(e.getX(), e.getY()), this);
+
+            // CORREÇÃO: Força o redesenho se estiver na ferramenta de Ângulo para a linha seguir o mouse
+            if (functions.getFunctionSelected() == HandleFunctions.FunctionType.DIMENSION_ANGLE) {
+                redraw();
+            }
         });
 
+        // ... (Resto do construtor: layerVisibility, compassImage, AnimationTimer...)
         layerVisibility.put("DEFAULT", true);
         layerVisibility.put("TEXT", true);
         layerVisibility.put("CURVA_MESTRA", true);
@@ -98,10 +104,7 @@ public class CadCanvas extends Canvas {
         try {
             compassImage = new Image(
                     CAD.class.getResourceAsStream("/mspm/icons/rosa-dos-ventos.png"),
-                    COMPASS_SIZE, // Largura desejada
-                    COMPASS_SIZE, // Altura desejada
-                    true,         // preserveRatio
-                    true          // smooth
+                    80.0, 80.0, true, true
             );
         } catch (Exception e) {
             System.err.println("Imagem da Rosa dos Ventos não encontrada.");
@@ -112,10 +115,8 @@ public class CadCanvas extends Canvas {
             public void handle(long now) {
                 if (functions.isEdgePanEnabled()) {
                     functions.updateEdgePan(getWidth(), getHeight());
-
                     double dx = functions.getEdgeDx();
                     double dy = functions.getEdgeDy();
-
                     if (dx != 0 || dy != 0) {
                         trans.prependTranslation(dx, dy);
                         redraw();
@@ -282,6 +283,10 @@ public class CadCanvas extends Canvas {
     }
 
     private void finishPolyLineLogic() {
+        if (activePolyline != null) {
+            activePolyline.validatePerimeter();
+        }
+
         activePolyline = null;
         System.out.println("Polilinha finalizada.");
 
@@ -333,28 +338,20 @@ public class CadCanvas extends Canvas {
     }
 
     public void createTableAt(double x, double y) {
-        List<TopoPoint> allPoints = getAllPoints();
-        if (allPoints.isEmpty()) {
-            System.out.println("Sem pontos para gerar tabela.");
-            return;
-        }
+        // Cria uma tabela vazia inicialmente.
+        // Os dados serão injetados pelo DashboardView logo após a criação.
+        com.brasens.model.objects.TopoTableObject table =
+                new com.brasens.model.objects.TopoTableObject(x, y);
 
+        // Configuração visual inicial
         double currentScale = trans.getMxx();
         if (currentScale == 0) currentScale = 1.0;
-
         double targetPixelSize = 12.0;
-
         double worldFontSize = targetPixelSize / currentScale;
 
-        double worldRowHeight = worldFontSize * 2.0;
-        double worldColWidth = worldFontSize * 6.0;
-
-        com.brasens.model.objects.TopoTableObject table =
-                new com.brasens.model.objects.TopoTableObject(x, y, new ArrayList<>(allPoints));
-
         table.setFontSize(worldFontSize);
-        table.setRowHeight(worldRowHeight);
-        table.setColWidth(worldColWidth);
+        table.setRowHeight(worldFontSize * 2.0);
+        table.setColWidth(worldFontSize * 6.0);
 
         this.objects.add(table);
         redraw();
@@ -475,6 +472,69 @@ public class CadCanvas extends Canvas {
                     start.getX() - globalOffsetX, -(start.getY() - globalOffsetY),
                     end.getX() - globalOffsetX, -(end.getY() - globalOffsetY)
             );
+            gc.setLineDashes(null);
+        }
+
+// --- PREVIEW VISUAL DA FERRAMENTA DE ÂNGULO ---
+        if (functions.getFunctionSelected() == HandleFunctions.FunctionType.DIMENSION_ANGLE && functions.getAngleStep() > 0) {
+            gc.setStroke(Color.YELLOW);
+            gc.setLineWidth(1.5 / scale);
+            gc.setLineDashes(10.0 / scale); // Tracejado grande
+
+            // 1. Lógica de SNAP Visual
+            double mouseX = functions.getCurrentMouseX();
+            double mouseY = functions.getCurrentMouseY();
+
+            // Verifica se tem ponto próximo para fazer SNAP
+            TopoPoint snapPoint = findPointNear(mouseX, mouseY, 15.0); // Tolerância de 15px
+
+            Vector2D targetPos;
+            if (snapPoint != null) {
+                // Se achou snap, a linha vai para o ponto exato
+                targetPos = new Vector2D(snapPoint.getX(), snapPoint.getY());
+
+                // Desenha um marcador visual (quadradinho) para indicar o Snap
+                // Precisamos resetar a transformação para desenhar na tela ou calcular coord relativa
+                // Aqui desenhamos relativo (Mundo):
+                double sx = snapPoint.getX() - globalOffsetX;
+                double sy = -(snapPoint.getY() - globalOffsetY);
+                double boxSize = 8.0 / scale;
+                gc.strokeRect(sx - boxSize/2, sy - boxSize/2, boxSize, boxSize);
+
+            } else {
+                // Se não, segue o mouse livremente
+                targetPos = screenToWorld(mouseX, mouseY);
+            }
+
+            TopoPoint v = functions.getAngleVertex();
+            if (v != null) {
+                double vx = v.getX() - globalOffsetX;
+                double vy = -(v.getY() - globalOffsetY);
+
+                if (functions.getAngleStep() == 1) {
+                    // Estado 1: Linha Vértice -> Alvo (Mouse ou Snap)
+                    double mx = targetPos.x() - globalOffsetX;
+                    double my = -(targetPos.y() - globalOffsetY);
+                    gc.strokeLine(vx, vy, mx, my);
+                }
+                else if (functions.getAngleStep() == 2 && functions.getAngleP1() != null) {
+                    // Estado 2:
+                    TopoPoint p1 = functions.getAngleP1();
+                    double p1x = p1.getX() - globalOffsetX;
+                    double p1y = -(p1.getY() - globalOffsetY);
+                    gc.strokeLine(vx, vy, p1x, p1y); // Linha Fixa (V -> P1)
+
+                    // Linha 2 (Dinâmica): Vértice -> Alvo (Mouse ou Snap)
+                    double mx = targetPos.x() - globalOffsetX;
+                    double my = -(targetPos.y() - globalOffsetY);
+                    gc.strokeLine(vx, vy, mx, my);
+
+                    // Texto do ângulo em tempo real (Calculado com o SNAP)
+                    double curAng = com.brasens.utilities.math.TopologyMath.calculateInnerAngle(v, p1, new TopoPoint("M", targetPos.x(), targetPos.y()));
+                    gc.setFill(Color.YELLOW);
+                    gc.fillText(String.format("%.0f°", curAng), vx + 10, vy - 10);
+                }
+            }
             gc.setLineDashes(null);
         }
 
@@ -744,11 +804,190 @@ public class CadCanvas extends Canvas {
                 objMinY <= rMaxY && objMaxY >= rMinY);
     }
 
+    // Método auxiliar para adicionar um objeto de texto simples
+    public void addTextLabel(double x, double y, String text, double fontSize) {
+        TopoObject textObj = new TopoObject();
+        textObj.setId("DIM-" + System.currentTimeMillis());
+        textObj.setLayerName("TEXT"); // Garante que vai para o layer de texto
+
+        // Cria o ponto do texto
+        TopoPoint p = new TopoPoint(text, x, y);
+
+        // Opcional: Se quiser diferenciar textos de cota, pode criar um atributo size no TopoObject
+        // Por enquanto, usamos o padrão do layer TEXT
+
+        textObj.addPoint(p);
+        this.objects.add(textObj);
+    }
+
+    public void handleDimensionAngleClick(double screenX, double screenY) {
+        // Verifica pontos selecionados com Shift
+        List<TopoPoint> selected = getSelectedPoints();
+        TopoPoint hitPoint = findPointNear(screenX, screenY, 10.0);
+        Vector2D worldPos = screenToWorld(screenX, screenY);
+
+        // CASO 1: 2 Pontos Selecionados + Clique no Vértice
+        // (O clique define o vértice, e os selecionados são as direções)
+        if (functions.getAngleStep() == 0 && selected.size() == 3) {
+            // ... (definição de v, p1, p2) ...
+            TopoPoint p1 = selected.get(0); TopoPoint v = selected.get(1); TopoPoint p2 = selected.get(2);
+            createAngleLabel(v, p1, p2);
+            clearSelection();
+
+            // RESET
+            if (functions.getOnActionFinished() != null) {
+                functions.getOnActionFinished().run();
+                functions.setOnActionFinished(null);
+            }
+            return;
+        }
+
+        // CENARIO B (1 ponto selecionado - Auto)
+        if (functions.getAngleStep() == 0 && selected.size() == 1) {
+            // ... (lógica de vizinhos) ...
+            TopoPoint v = selected.get(0);
+            TopoObject parent = findParentElement(v);
+            if (parent != null && parent.getPoints().size() > 2) {
+                // ... (cálculo prev/next) ...
+                // Supondo que achou prev e next:
+                // createAngleLabel(v, prev, next);
+                // clearSelection();
+
+                // RESET (Adicione dentro do if(prev!=null && next!=null))
+                // if (functions.getOnActionFinished() != null) {
+                //    functions.getOnActionFinished().run();
+                //    functions.setOnActionFinished(null);
+                // }
+                // return;
+            }
+        }
+
+        if (functions.getAngleStep() == 0) {
+            // Passo 1...
+            functions.setAngleVertex(hitPoint != null ? hitPoint : new TopoPoint("V", worldPos.x(), worldPos.y()));
+            functions.setAngleStep(1);
+        }
+        else if (functions.getAngleStep() == 1) {
+            // Passo 2...
+            TopoPoint p1 = hitPoint != null ? hitPoint : new TopoPoint("P1", worldPos.x(), worldPos.y());
+            if (p1 == functions.getAngleVertex()) return;
+            functions.setAngleP1(p1);
+            functions.setAngleStep(2);
+        }
+        else if (functions.getAngleStep() == 2) {
+            // Passo 3... Finaliza!
+            TopoPoint p2 = hitPoint != null ? hitPoint : new TopoPoint("P2", worldPos.x(), worldPos.y());
+            createAngleLabel(functions.getAngleVertex(), functions.getAngleP1(), p2);
+
+            functions.setAngleStep(0);
+            functions.setAngleVertex(null);
+            functions.setAngleP1(null);
+
+            // --- RESET AUTOMÁTICO ---
+            if (functions.getOnActionFinished() != null) {
+                functions.getOnActionFinished().run();
+                functions.setOnActionFinished(null);
+            }
+        }
+        redraw();
+    }
+
+    // Auxiliar necessário
+    private List<TopoPoint> getSelectedPoints() {
+        List<TopoPoint> list = new ArrayList<>();
+        for (TopoObject obj : objects) {
+            for (TopoPoint p : obj.getPoints()) {
+                if (p.isSelected()) list.add(p);
+            }
+        }
+        return list;
+    }
+
+    private void createAngleLabel(TopoPoint v, TopoPoint p1, TopoPoint p2) {
+        double ang = com.brasens.utilities.math.TopologyMath.calculateInnerAngle(v, p1, p2);
+        String txt = com.brasens.utilities.math.TopologyMath.degreesToDMS(ang);
+
+        // Pequeno offset para o texto não ficar em cima do ponto
+        addTextLabel(v.getX() + 2.0, v.getY() + 2.0, txt, 10.0);
+    }
+
+    // Lógica para Cotar Área
+    public void handleDimensionArea(double screenX, double screenY) {
+        // ... (Lógica de encontrar hitObj permanece igual) ...
+        TopoObject hitObj = null;
+        TopoPoint nearPoint = findPointNear(screenX, screenY, 10.0);
+        if (nearPoint != null) {
+            hitObj = findParentElement(nearPoint);
+        } else {
+            for (TopoObject obj : objects) {
+                if (isObjectSelected(obj) && obj.isClosed()) {
+                    hitObj = obj;
+                    break;
+                }
+            }
+        }
+
+        if (hitObj != null && hitObj.isClosed()) {
+            double areaHa = hitObj.getAreaHa();
+            double areaM2 = areaHa * 10000.0;
+            TopoPoint center = com.brasens.utilities.math.TopologyMath.getCentroid(hitObj.getPoints());
+            String label = String.format("Área: %.4f ha\n(%.2f m²)", areaHa, areaM2);
+            addTextLabel(center.getX(), center.getY(), label, 12.0);
+
+            System.out.println("Área cotada inserida.");
+            redraw();
+
+            // --- RESET AUTOMÁTICO ---
+            if (functions.getOnActionFinished() != null) {
+                functions.getOnActionFinished().run();
+                functions.setOnActionFinished(null); // Limpa para não executar 2x
+            }
+
+        } else {
+            System.out.println("Nenhum polígono fechado identificado.");
+        }
+    }
+
+    // Lógica para Cotar Distâncias e Azimutes (Segmentos)
+    public void handleDimensionSegments(double screenX, double screenY) {
+        TopoPoint nearPoint = findPointNear(screenX, screenY, 10.0);
+        TopoObject hitObj = (nearPoint != null) ? findParentElement(nearPoint) : null;
+
+        if (hitObj == null) return;
+
+        List<TopoPoint> pts = hitObj.getPoints();
+        if (pts.size() < 2) return;
+
+        // ... (Loop de cálculo de distância/azimute permanece igual) ...
+        int n = pts.size();
+        int limit = hitObj.isClosed() ? n : n - 1;
+
+        for (int i = 0; i < limit; i++) {
+            TopoPoint p1 = pts.get(i);
+            TopoPoint p2 = pts.get((i + 1) % n);
+            double dist = com.brasens.utilities.math.TopologyMath.getDistance2D(p1, p2);
+            double azimute = com.brasens.utilities.math.TopologyMath.getAzimuth(p1, p2);
+            String azimuteStr = com.brasens.utilities.math.TopologyMath.degreesToDMS(azimute);
+            TopoPoint mid = com.brasens.utilities.math.TopologyMath.getMidPoint(p1, p2);
+            String label = String.format("%.2f m\nAz: %s", dist, azimuteStr);
+            addTextLabel(mid.getX(), mid.getY(), label, 10.0);
+        }
+
+        redraw();
+        System.out.println("Segmentos cotados.");
+
+        // --- RESET AUTOMÁTICO ---
+        if (functions.getOnActionFinished() != null) {
+            functions.getOnActionFinished().run();
+            functions.setOnActionFinished(null);
+        }
+    }
+
     private void drawTable(GraphicsContext gc, com.brasens.model.objects.TopoTableObject table, double scale) {
         TopoPoint origin = table.getPoints().get(0);
 
-        double startX = origin.getX() - globalOffsetX;
-        double startY = -(origin.getY() - globalOffsetY);
+        double startX = origin.getX() - getGlobalOffsetX();
+        double startY = -(origin.getY() - getGlobalOffsetY());
 
         // Dimensões
         double rowH = table.getRowHeight(); // Metros
@@ -762,36 +1001,47 @@ public class CadCanvas extends Canvas {
 
         gc.setFont(javafx.scene.text.Font.font("Arial", FontWeight.NORMAL, table.getFontSize()));
 
+        // 1. Desenha Borda Externa
         gc.strokeRect(startX, startY, totalW, totalH);
 
-        for (int i = 0; i <= table.getDataPoints().size() + 1; i++) {
+        // 2. Desenha Linhas Horizontais
+        // (Cabeçalho + Dados)
+        int totalRows = table.getDataRows().size() + 1;
+        for (int i = 0; i <= totalRows; i++) {
             double y = startY + (i * rowH);
             gc.strokeLine(startX, y, startX + totalW, y);
         }
 
-        for (int i = 0; i <= table.getHeaders().length; i++) {
+        // 3. Desenha Linhas Verticais
+        int totalCols = table.getHeaders().length;
+        for (int i = 0; i <= totalCols; i++) {
             double x = startX + (i * colW);
             gc.strokeLine(x, startY, x, startY + totalH);
         }
 
+        // 4. Preenche os Textos
         double textOffX = colW * 0.1;
         double textOffY = rowH * 0.7;
 
+        // Cabeçalhos
         String[] headers = table.getHeaders();
         for (int i = 0; i < headers.length; i++) {
             gc.fillText(headers[i], startX + (i * colW) + textOffX, startY + textOffY);
         }
 
+        // Dados
         double currentY = startY + rowH;
-        for (TopoPoint p : table.getDataPoints()) {
-            gc.fillText(p.getName(), startX + textOffX, currentY + textOffY);
-            gc.fillText(String.format("%.2f", p.getY()), startX + colW + textOffX, currentY + textOffY);
-            gc.fillText(String.format("%.2f", p.getX()), startX + (colW * 2) + textOffX, currentY + textOffY);
-            gc.fillText(String.format("%.2f", p.getZ()), startX + (colW * 3) + textOffX, currentY + textOffY);
-
+        for (String[] row : table.getDataRows()) {
+            for (int col = 0; col < row.length; col++) {
+                if (col < totalCols) { // Segurança para não estourar array
+                    String text = row[col] != null ? row[col] : "";
+                    gc.fillText(text, startX + (col * colW) + textOffX, currentY + textOffY);
+                }
+            }
             currentY += rowH;
         }
 
+        // Destaque de Seleção
         if (isObjectSelected(table)) {
             gc.setStroke(Color.ORANGERED);
             gc.setLineWidth(2.0 / scale);
@@ -917,30 +1167,43 @@ public class CadCanvas extends Canvas {
     }
 
     private TopoObject cloneObject(TopoObject source) {
+        // Se for tabela, usa o construtor novo e copia os dados de texto
+        if (source instanceof com.brasens.model.objects.TopoTableObject) {
+            com.brasens.model.objects.TopoTableObject srcTbl = (com.brasens.model.objects.TopoTableObject) source;
+
+            // Cria nova tabela na mesma posição
+            com.brasens.model.objects.TopoTableObject newTbl = new com.brasens.model.objects.TopoTableObject(
+                    srcTbl.getPoints().get(0).getX(),
+                    srcTbl.getPoints().get(0).getY()
+            );
+
+            // Copia propriedades visuais
+            newTbl.setRowHeight(srcTbl.getRowHeight());
+            newTbl.setColWidth(srcTbl.getColWidth());
+            newTbl.setFontSize(srcTbl.getFontSize());
+
+            // Copia os dados (Deep Copy das Strings)
+            List<String[]> newRows = new ArrayList<>();
+            for(String[] row : srcTbl.getDataRows()) {
+                newRows.add(row.clone());
+            }
+            newTbl.setCustomData(srcTbl.getHeaders().clone(), newRows);
+
+            return newTbl;
+        }
+
+        // ... (Mantenha o resto da lógica para Linhas/Polilinhas igual) ...
         TopoObject clone = new TopoObject();
         clone.setId(source.getId());
         clone.setLayerName(source.getLayerName());
         clone.setType(source.getType());
         clone.setClosed(source.isClosed());
 
-        // Clona pontos (Deep Copy)
         for (TopoPoint p : source.getPoints()) {
             TopoPoint np = new TopoPoint(p.getName(), p.getX(), p.getY());
             np.setZ(p.getZ());
             clone.addPoint(np);
         }
-
-        // Se for tabela, copia atributos específicos
-        if (source instanceof com.brasens.model.objects.TopoTableObject) {
-            com.brasens.model.objects.TopoTableObject srcTbl = (com.brasens.model.objects.TopoTableObject) source;
-            com.brasens.model.objects.TopoTableObject newTbl = new com.brasens.model.objects.TopoTableObject(
-                    srcTbl.getPoints().get(0).getX(),
-                    srcTbl.getPoints().get(0).getY(),
-                    new ArrayList<>(srcTbl.getDataPoints()) // Copia lista
-            );
-            return newTbl;
-        }
-
         return clone;
     }
 
@@ -1259,7 +1522,7 @@ public class CadCanvas extends Canvas {
 
         if (contextMenu != null) contextMenu.hide();
 
-        // 1. Verifica se clicou numa bolinha de resize (Prioridade)
+        // 1. Resize Tabela
         ResizeHandle handle = checkResizeHandles(e.getX(), e.getY());
         if (handle != ResizeHandle.NONE) {
             this.activeResizeHandle = handle;
@@ -1267,16 +1530,10 @@ public class CadCanvas extends Canvas {
             return;
         }
 
-        // 2. Menu de Contexto
+        // 2. Menu Contexto
         if (e.getButton() == MouseButton.SECONDARY) {
             TopoPoint hitPoint = findPointNear(e.getX(), e.getY(), 10.0);
-            TopoObject hitObj = null;
-            if (hitPoint != null) {
-                hitObj = findParentElement(hitPoint);
-            } else {
-                // Se não achou ponto, vê se clicou numa tabela para mostrar menu dela
-                hitObj = findTableAtScreenPos(e.getX(), e.getY());
-            }
+            TopoObject hitObj = (hitPoint != null) ? findParentElement(hitPoint) : findTableAtScreenPos(e.getX(), e.getY());
             showContextMenu(e, hitObj);
             return;
         }
@@ -1287,38 +1544,50 @@ public class CadCanvas extends Canvas {
         startDragY = e.getY();
         isDraggingConfirmed = false;
 
+        // 3. FERRAMENTA ATIVA (Ângulo, Linha, etc)
+        if (functions.getFunctionSelected() != HandleFunctions.FunctionType.NONE) {
+            // CORREÇÃO: Se segurar SHIFT, permite selecionar/deselecionar pontos mesmo com ferramenta ativa
+            if (e.isShiftDown()) {
+                TopoPoint hitPoint = findPointNear(e.getX(), e.getY(), 10.0);
+                if (hitPoint != null) {
+                    hitPoint.setSelected(!hitPoint.isSelected()); // Toggle
+                    if (onSelectionChanged != null) onSelectionChanged.accept(hitPoint);
+                    redraw();
+                }
+                return; // Não executa a ferramenta, apenas seleciona
+            }
+
+            functions.handleClick(new Vector2D(e.getX(), e.getY()), this);
+            return;
+        }
+
+        // 4. LÓGICA DE SELEÇÃO PADRÃO (Sem ferramenta)
+        // ... (Mantém o código original que você já tem para seleção normal e Pan)
         TopoPoint hitPoint = findPointNear(e.getX(), e.getY(), 10.0);
 
-        if (functions.getFunctionSelected() == HandleFunctions.FunctionType.NONE) {
-            if (hitPoint != null) {
-                // CLICOU EM PONTO
-                functions.setPointBeingDragged(hitPoint);
-                if (!hitPoint.isSelected()) {
-                    if (!e.isControlDown() && !e.isShiftDown()) clearSelection();
-                    hitPoint.setSelected(true);
-                }
-                if (onSelectionChanged != null) onSelectionChanged.accept(hitPoint);
+        if (hitPoint != null) {
+            functions.setPointBeingDragged(hitPoint);
+            if (!hitPoint.isSelected()) {
+                if (!e.isControlDown() && !e.isShiftDown()) clearSelection();
+                hitPoint.setSelected(true);
+            } else {
+                if (e.isShiftDown()) hitPoint.setSelected(false);
+            }
+            if (onSelectionChanged != null) onSelectionChanged.accept(hitPoint);
+            redraw();
+            return;
+        } else {
+            // Tabela
+            com.brasens.model.objects.TopoTableObject hitTable = findTableAtScreenPos(e.getX(), e.getY());
+            if (hitTable != null) {
+                if (!e.isControlDown() && !e.isShiftDown()) clearSelection();
+                for(TopoPoint p : hitTable.getPoints()) p.setSelected(true);
                 redraw();
                 return;
-            } else {
-                // NÃO CLICOU EM PONTO -> Tenta Tabela ou Seleção por Caixa
-
-                // --- NOVO: Verifica se clicou no corpo de uma Tabela ---
-                com.brasens.model.objects.TopoTableObject hitTable = findTableAtScreenPos(e.getX(), e.getY());
-
-                if (hitTable != null) {
-                    // Seleciona a tabela inteira
-                    if (!e.isControlDown() && !e.isShiftDown()) clearSelection();
-
-                    // Marca todos os pontos da tabela como selecionados (para ativar o isObjectSelected)
-                    for(TopoPoint p : hitTable.getPoints()) p.setSelected(true);
-
-                    redraw(); // Isso vai disparar o drawResizeHandles
-                    return;
-                }
-
-                // --- Se não clicou em nada, inicia Seleção por Caixa ---
-                if (!e.isControlDown() && !e.isShiftDown()) clearSelection();
+            }
+            // Pan vs Box
+            if (!e.isControlDown()) {
+                if (!e.isShiftDown()) clearSelection();
                 functions.setSelectingBox(true);
                 functions.setSelectionStartScreenPoint(new Vector2D(e.getX(), e.getY()));
                 functions.setSelectionCurrentScreenPoint(new Vector2D(e.getX(), e.getY()));
@@ -1328,11 +1597,9 @@ public class CadCanvas extends Canvas {
             }
         }
 
-        // ... Logica de double click mantida ...
         double dTime = (System.nanoTime() - clickTime) / 1e6;
         clickTime = System.nanoTime();
         if (dTime < 250) functions.handleDoubleClick(new Vector2D(lastMouseX, lastMouseY), this);
-        else functions.handleClick(new Vector2D(lastMouseX, lastMouseY), this);
     }
 
     private TopoObject findParentElement(TopoPoint p) {
@@ -1417,13 +1684,21 @@ public class CadCanvas extends Canvas {
         }
 
         if (functions.isSelectingBox()) {
-            performWindowSelection(); // <--- Método novo que faremos abaixo
+            performWindowSelection();
 
             // Reseta estado
             functions.setSelectingBox(false);
             functions.setSelectionStartScreenPoint(null);
             functions.setSelectionCurrentScreenPoint(null);
             redraw();
+
+            // --- ADICIONE ISTO PARA ATUALIZAR A UI APÓS SELEÇÃO POR CAIXA ---
+            if (onSelectionChanged != null) {
+                // Passa null ou um ponto dummy apenas para disparar a verificação de seleção global
+                onSelectionChanged.accept(null);
+                // Nota: No handleSelectionUpdate, se receber null, ele vai checar os objetos selecionados de qualquer forma.
+                // Mas precisamos ajustar o handleSelectionUpdate para não esconder o overlay se tiver seleção.
+            }
         }
 
         functions.stopDrag();
@@ -1432,60 +1707,72 @@ public class CadCanvas extends Canvas {
     private void handleMouseDragged(MouseEvent e) {
         functions.updateMousePosition(e.getX(), e.getY());
 
-        // --- 0. NOVO: LÓGICA DE REDIMENSIONAMENTO DE TABELA ---
-        // Se uma alça estiver ativa, calcula o novo tamanho e encerra
+        // 1. Prioridade Máxima: Redimensionar Tabela (se houver alça ativa)
         if (activeResizeHandle != ResizeHandle.NONE && resizingTable != null) {
             Vector2D currentWorldPos = screenToWorld(e.getX(), e.getY());
-
             TopoPoint origin = resizingTable.getPoints().get(0);
 
-            // Calcula distâncias no Mundo
             double distX = currentWorldPos.x() - origin.getX();
-            // Inverte Y pois o mouse desce na tela (Y aumenta), mas no mundo Topo Y diminui
             double distY = origin.getY() - currentWorldPos.y();
 
-            // Travas de segurança (mínimo de 1 metro)
             if (distX < 1.0) distX = 1.0;
             if (distY < 1.0) distY = 1.0;
 
+            int totalRows = resizingTable.getDataRows().size() + 1;
+            int totalCols = resizingTable.getHeaders().length;
+
             switch (activeResizeHandle) {
-                case RIGHT: // Altera Largura da Coluna
-                    // Largura = Distância X / Número de Colunas
-                    double newColW = distX / resizingTable.getHeaders().length;
+                case RIGHT:
+                    double newColW = distX / totalCols;
                     resizingTable.setColWidth(newColW);
                     break;
-
-                case BOTTOM: // Altera Altura da Linha
-                    // Altura = Distância Y / (Dados + Cabeçalho)
-                    double newRowH = distY / (resizingTable.getDataPoints().size() + 1);
+                case BOTTOM:
+                    double newRowH = distY / totalRows;
                     resizingTable.setRowHeight(newRowH);
                     break;
-
-                case CORNER: // Escala Geral (Proporcional)
-                    // Usa a altura como base para tudo
-                    double totalRows = resizingTable.getDataPoints().size() + 1;
+                case CORNER:
                     double masterH = distY / totalRows;
-
                     resizingTable.setRowHeight(masterH);
-                    // Mantém a proporção visual: Fonte = 50% da linha, Coluna = 400% da linha
                     resizingTable.setFontSize(masterH * 0.5);
                     resizingTable.setColWidth(masterH * 4.0);
                     break;
             }
-
             redraw();
-            return; // Interrompe para não processar outros arrastes
+            return;
         }
 
-        // --- 1. SELEÇÃO POR CAIXA (WINDOW/CROSSING) ---
+        // 2. Prioridade Alta: PAN (Mover a Tela)
+        // Ativa se: Botão do Meio OU (Botão Esquerdo + CTRL)
+        if (e.getButton() == MouseButton.MIDDLE || (e.getButton() == MouseButton.PRIMARY && e.isControlDown())) {
+            double dx = e.getX() - lastMouseX;
+            double dy = e.getY() - lastMouseY;
+
+            try {
+                trans.prependTranslation(dx, dy);
+                redraw();
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+            // Atualiza a posição e RETORNA para não executar seleção ou arraste de pontos
+            lastMouseX = e.getX();
+            lastMouseY = e.getY();
+            return;
+        }
+
+        // 3. Seleção por Caixa (Se estiver ativa)
         if (functions.isSelectingBox()) {
             functions.setSelectionCurrentScreenPoint(new Vector2D(e.getX(), e.getY()));
-            redraw(); // Redesenha a caixa azul/verde
-            return; // Importante: não faz pan nem arrasta pontos
+            redraw();
+            return;
         }
 
-        // --- 2. ARRASTAR PONTO EXISTENTE ---
-        if (functions.getPointBeingDragged() != null && functions.getFunctionSelected() == HandleFunctions.FunctionType.NONE) {
+        // 4. Arrastar Ponto Existente
+        // Só executa se NÃO estiver segurando CTRL (redundância de segurança)
+        if (functions.getPointBeingDragged() != null
+                && functions.getFunctionSelected() == HandleFunctions.FunctionType.NONE
+                && !e.isControlDown()) {
+
             Vector2D worldPos = screenToWorld(e.getX(), e.getY());
 
             if (!isDraggingConfirmed) {
@@ -1509,19 +1796,6 @@ public class CadCanvas extends Canvas {
 
             redraw();
             return;
-        }
-
-        // --- 3. PAN (MOVER A TELA) ---
-        if (e.getButton() == MouseButton.MIDDLE || e.getButton() == MouseButton.PRIMARY) {
-            double dx = e.getX() - lastMouseX;
-            double dy = e.getY() - lastMouseY;
-
-            try {
-                trans.prependTranslation(dx, dy);
-                redraw();
-            } catch (Exception ex) {
-                ex.printStackTrace();
-            }
         }
 
         lastMouseX = e.getX();

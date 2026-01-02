@@ -31,6 +31,30 @@ public class TopoObject {
         this.points.add(p);
     }
 
+    // --- CORREÇÃO: Remove ponto duplicado ao validar fechamento ---
+    public void validatePerimeter() {
+        // 1. Verifica geometricamente se o último ponto é igual ao primeiro
+        if (!points.isEmpty() && points.size() > 2) {
+            TopoPoint p1 = points.get(0);
+            TopoPoint p2 = points.get(points.size() - 1);
+
+            double dist = Math.hypot(p1.getX() - p2.getX(), p1.getY() - p2.getY());
+
+            // Se estiver no mesmo lugar (fechou o ciclo)
+            if (dist < 0.01) {
+                this.closed = true;
+                // Remove o último ponto porque ele é redundante (já temos o primeiro)
+                this.points.remove(points.size() - 1);
+            }
+        }
+
+        // 2. Se a flag estiver fechada, define como Camada PERIMETRO
+        if (this.closed) {
+            this.setLayerName("PERIMETRO");
+        }
+    }
+    // -------------------------------------------------------------
+
     public double getAreaHa() {
         if (this.points.size() < 3) return 0.0;
 
@@ -68,5 +92,4 @@ public class TopoObject {
     private double distance(TopoPoint p1, TopoPoint p2) {
         return Math.hypot(p2.getX() - p1.getX(), p2.getY() - p1.getY());
     }
-
 }

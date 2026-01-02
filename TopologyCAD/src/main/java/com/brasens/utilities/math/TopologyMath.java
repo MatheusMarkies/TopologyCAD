@@ -2,6 +2,8 @@ package com.brasens.utilities.math;
 
 import com.brasens.model.objects.TopoPoint;
 
+import java.util.List;
+
 public class TopologyMath {
 
     public static String formatLatitude(double latDecimal) {
@@ -100,5 +102,46 @@ public class TopologyMath {
 
         // Arredondamento para 2 casas decimais nos segundos
         return String.format("%d°%02d'%05.2f\"", d, m, s);
+    }
+
+    public static TopoPoint getCentroid(List<TopoPoint> points) {
+        if (points == null || points.isEmpty()) return null;
+
+        double sumX = 0;
+        double sumY = 0;
+
+        for (TopoPoint p : points) {
+            sumX += p.getX();
+            sumY += p.getY();
+        }
+
+        double centerX = sumX / points.size();
+        double centerY = sumY / points.size();
+
+        return new TopoPoint("CENTER", centerX, centerY);
+    }
+
+    /**
+     * Calcula o ponto médio entre dois pontos.
+     * Útil para posicionar o texto de cota na linha.
+     */
+    public static TopoPoint getMidPoint(TopoPoint p1, TopoPoint p2) {
+        double mx = (p1.getX() + p2.getX()) / 2.0;
+        double my = (p1.getY() + p2.getY()) / 2.0;
+        return new TopoPoint("MID", mx, my);
+    }
+
+    public static double calculateInnerAngle(TopoPoint center, TopoPoint p1, TopoPoint p2) {
+        double a1 = Math.atan2(p1.getY() - center.getY(), p1.getX() - center.getX());
+        double a2 = Math.atan2(p2.getY() - center.getY(), p2.getX() - center.getX());
+
+        double angleRad = Math.abs(a1 - a2);
+        double angleDeg = Math.toDegrees(angleRad);
+
+        if (angleDeg > 180.0) {
+            angleDeg = 360.0 - angleDeg;
+        }
+
+        return angleDeg;
     }
 }
