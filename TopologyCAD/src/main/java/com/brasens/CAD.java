@@ -6,7 +6,6 @@ import com.brasens.layout.DownloadPopup;
 import com.brasens.layout.LayoutSizeManager;
 import com.brasens.layout.controller.fxml.ActionStatusPopUp;
 import com.brasens.utilities.FileDownload;
-import com.brasens.utilities.common.FilesManager;
 import javafx.animation.PauseTransition;
 import javafx.application.Application;
 import javafx.application.ConditionalFeature;
@@ -27,13 +26,14 @@ import org.springframework.context.ConfigurableApplicationContext;
 import java.io.IOException;
 
 import static com.brasens.Config.APP_VERSION;
+import static com.brasens.utilities.common.FilesManager.applicationDirCreator;
 
 @Getter
 @Setter
 @SpringBootApplication
 public class CAD extends Application {
     private Scene scene;
-    private Stage stage;
+    private Stage primaryStageInstance;
 
     private ConfigurableApplicationContext springContext;
     private ApplicationWindow rootLayout;
@@ -49,37 +49,39 @@ public class CAD extends Application {
 
     @Override
     public void start(Stage stage) {
-        FilesManager.applicationDirCreator();
+        try {
+            applicationDirCreator();
+            System.out.println("APP_VERSION: " + APP_VERSION);
 
-        System.out.println("APP_VERSION: "+ APP_VERSION);
+            this.primaryStageInstance = stage;
 
-        var root = new ApplicationWindow();
-        var antialiasing = Platform.isSupported(ConditionalFeature.EFFECT)
-                ? SceneAntialiasing.BALANCED
-                : SceneAntialiasing.DISABLED;
+            StageHolder stageHolder = springContext.getBean(StageHolder.class);
+            stageHolder.setPrimaryStage(stage);
 
-        scene = new Scene(root, ApplicationWindow.MIN_WIDTH + 80, 768, false, antialiasing);
+            var antialiasing = Platform.isSupported(ConditionalFeature.EFFECT)
+                    ? SceneAntialiasing.BALANCED
+                    : SceneAntialiasing.DISABLED;
 
-        Application.setUserAgentStylesheet(new atlantafx.base.theme.PrimerDark().getUserAgentStylesheet());
+            if (rootLayout == null) {
+                System.err.println("ERRO CRÍTICO: rootLayout é nulo após initializeUI()! Não deveria acontecer.");
+                Platform.exit();
+                return;
+            }
+            scene = new Scene(rootLayout, ApplicationWindow.MIN_WIDTH + 80, 768, false, antialiasing);
 
-        scene.getStylesheets().add(getClass().getResource("/mspm/pages/DashboardCSS.css").toString());
+            Application.setUserAgentStylesheet(new atlantafx.base.theme.PrimerDark().getUserAgentStylesheet());
 
-        stage.setScene(scene);
+            scene.getStylesheets().add(getClass().getResource("/mspm/pages/DashboardCSS.css").toString());
 
-        stage.setTitle("Workbench");
+            stage.setScene(scene);
+            stage.setTitle("Workbench");
 
-        //Image brasensIcon = new Image(Workbench.class.getResource("/mspm/resources/Icone File.png").toString());
+            stage.setMaximized(true);
+            stage.show();
 
-        //stage.getIcons().add(brasensIcon);
-        stage.setScene(scene);
-
-        stage.setOnCloseRequest(event -> {
-            Platform.exit();
-            System.exit(0);
-        });
-
-        stage.setMaximized(true);
-        stage.show();
+        } catch (Throwable t) {
+            t.printStackTrace(System.err);
+        }
     }
 
     /**
@@ -149,8 +151,8 @@ public class CAD extends Application {
             Scene scene = new Scene(root, ApplicationWindow.MIN_WIDTH + 80, 768, false, antialiasing);
 
             Application.setUserAgentStylesheet(new PrimerLight().getUserAgentStylesheet());
+            scene.getStylesheets().add(CAD.class.getResource("/mspm/pages/AssetsCSS.css").toString());
 
-            scene.getStylesheets().add(CAD.class.getResource("/mspm/pages/PopupCSS.css").toString());
             stage.initStyle(StageStyle.DECORATED);
             stage.setResizable(false);
 

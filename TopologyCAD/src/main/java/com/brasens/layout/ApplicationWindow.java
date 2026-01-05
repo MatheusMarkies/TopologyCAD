@@ -1,6 +1,5 @@
 package com.brasens.layout;
 
-import com.brasens.CAD;
 import com.brasens.Config;
 import com.brasens.NetworkManager;
 import com.brasens.model.Update;
@@ -9,6 +8,8 @@ import com.brasens.utilities.FileDownload;
 import com.brasens.utilities.common.FilesManager;
 import com.brasens.utils.NodeUtils;
 import com.brasens.utils.Page;
+import jakarta.annotation.PostConstruct;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.layout.AnchorPane;
@@ -55,25 +56,20 @@ import java.util.List;
 public class ApplicationWindow extends AnchorPane {
 
     // Main class
-    CAD CAD;
+    // ATENÇÃO: Evite nomear variáveis igual à Classe (CAD CAD), isso causa confusão e possíveis erros.
+    // Sugestão: private CAD mainApp;
+    com.brasens.CAD CAD;
 
     @Autowired
     private UpdateRepository updateRepository;
 
-    // Constants for interface body identification and minimum width
     public static final String BODY_ID = "body";
     public static final int MIN_WIDTH = 1280;
 
-    // Instâncias de gerenciadores para rede e visualização
     private NetworkManager networkManager;
     private ViewManager viewManager;
 
     BorderPane borderPane = new BorderPane();
-
-    // Manager instances for network and visualization
-    public void init(){
-        tryUpdate();
-    }
 
     // Class constructor
     public ApplicationWindow() {
@@ -83,7 +79,9 @@ public class ApplicationWindow extends AnchorPane {
 
         // Interface configuration
         viewManager.setup(this);
-        init(); // Calls the initialization method
+
+        // --- CORREÇÃO: init() REMOVIDO DAQUI ---
+        // O init() agora será chamado automaticamente pelo Spring após a injeção do Repository
 
         // Configuring the size, style and identification of the main window
         setPrefSize(LayoutSizeManager.getResizedWidth(1280), LayoutSizeManager.getResizedHeight(800));
@@ -104,110 +102,63 @@ public class ApplicationWindow extends AnchorPane {
         changePage(viewManager.getDashboardView());
         BorderPane.setAlignment(viewManager.getDashboardView(), Pos.CENTER);
 
-        /*
-        Update appUpdate = new Update();
-        try {
-            HTTPResponse statusResponse = HTTPRequests.GET(
-                    Config.BACKEND_HOST_UPDATE_ENDPOINT,
-                    getNetworkManager().getToken().getTokenJWT()
-            );
-
-            if (statusResponse.getCode() == HttpStatusCode.OK) {
-                String responseData = statusResponse.getContent();
-                if (responseData != null) {
-                    final ObjectMapper objectMapperData = new ObjectMapper();
-                    objectMapperData.registerModule(new JavaTimeModule());
-                    appUpdate = objectMapperData.readValue(responseData, new TypeReference<Update>() {
-                    });
-                if(!appUpdate.getVersion().equals(Config.APP_VERSION))
-                    Workbench.openUpdatePopUp(appUpdate);
-                }
-                System.out.println(appUpdate.toString());
-            }
-        }catch (Exception e){
-            Workbench.printNicerStackTrace(e);
-        }*/
-
         // Adds BorderPane as a child of AnchorPane (main window)
         getChildren().addAll(borderPane);
     }
 
+    @PostConstruct
+    public void init(){
+        tryUpdate();
+    }
+
     public void tryUpdate() {
-        Update appUpdate = new Update();
+        // Verificação de segurança
+        if (updateRepository == null) return;
+
+        // 1. Acesso ao Banco de Dados (Pode rodar na thread do Spring)
         List<Update> updateList = updateRepository.findAll();
+        Update appUpdate = new Update();
 
         if (!updateList.isEmpty())
-            appUpdate = updateRepository.findAll().get(0);
+            appUpdate = updateList.get(0);
 
         System.out.println("Config.APP_VERSION: " + Config.APP_VERSION);
         System.out.println("appUpdate.APP_VERSION: " + appUpdate.getVersion());
 
-        if (!appUpdate.getVersion().equals(Config.APP_VERSION)) {
+        if (appUpdate.getVersion() != null && !appUpdate.getVersion().equals(Config.APP_VERSION)) {
+
             FileDownload fileDownload = new FileDownload("TopologyCAD.exe", FilesManager.ApplicationDataFolder + "\\update", appUpdate.getURL());
             System.out.println("Open Update Popup!");
-            try {
-                CAD.openDownloadPopUp(fileDownload);
-            } catch (Exception e) {
-                CAD.printNicerStackTrace(e);
-            }
+
+            Platform.runLater(() -> {
+                try {
+                    // Tenta usar a instância injetada ou o método estático
+                    if (CAD != null) {
+                        CAD.openDownloadPopUp(fileDownload);
+                    } else {
+
+                        com.brasens.CAD.openDownloadPopUp(fileDownload);
+                    }
+                } catch (Exception e) {
+                    com.brasens.CAD.printNicerStackTrace(e);
+                }
+            });
         }
     }
 
-/*
-    // Method called after login
-    public void realiseLogin(){
-        // Configuration of the navigation bar and top menu after login
-        borderPane.setMaxWidth(Double.MAX_VALUE);
-
-        AnchorPane lFiller = new AnchorPane(); HBox.setHgrow(lFiller, Priority.ALWAYS); lFiller.setMinWidth(160.0);
-        AnchorPane rFiller = new AnchorPane(); HBox.setHgrow(rFiller, Priority.ALWAYS); rFiller.setMinWidth(160.0);
-
-        HBox topHBox = new HBox();
-        topHBox.getChildren().addAll(getViewManager().getTopMenu());
-
-        double rightOffset = 160.0;
-
-        rightOffset = LayoutSizeManager.getPageSideOffset();// + getViewManager().getNavBar().getNavBarWidth();
-
-        rFiller.setMinWidth(rightOffset);
-
-        HBox.setMargin(getViewManager().getTopMenu(), LayoutSizeManager.getResizedInsert(0.0, rightOffset, 0.0, LayoutSizeManager.getPageSideOffset()));
-
-        HBox leftHBox = new HBox();
-        leftHBox.getChildren().addAll(getViewManager().getNavBar());
-
-        HBox.setMargin(getViewManager().getNavBar(), LayoutSizeManager.getResizedInsert( 0.0,0.0,0.0, LayoutSizeManager.getPageSideOffset()));
-
-        borderPane.setLeft(leftHBox);
-        borderPane.setTop(topHBox);
-        borderPane.setRight(rFiller);
-
-        getChildren().clear();
-        getChildren().addAll(borderPane);
-
-        // Switches to the main dashboard page after logging in
-        changePage(viewManager.getDashboardView());
-    }
-*/
-    // Variable to store the currently loaded page
+    // ... (restante do código: changePage, etc) ...
     private Page currentPageLoaded;
 
-    // Method for changing the page in the interface
     public void changePage(Page page){
-        borderPane.setCenter(page); // Sets the center of the BorderPane as the new page
+        borderPane.setCenter(page);
+        page.getController().init();
 
-        page.getController().init(); // Initializes the page controller
-
-        // Disables refresh of previous page
         if(currentPageLoaded != null) {
-            currentPageLoaded.getController().close(); // Closed the page controller
+            currentPageLoaded.getController().close();
             currentPageLoaded.getController().setUpdate(false);
         }
 
-        // Activates the refresh of the new page (refresh interval defined in the subclasses of the Controller class by means of a counter variable that counts how many times a 100ms delay has occurred)
         page.getController().setUpdate(true);
-
-        // Refreshes the currently loaded page
         currentPageLoaded = page;
     }
 }

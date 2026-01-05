@@ -11,7 +11,7 @@ import lombok.NoArgsConstructor;
 import java.util.UUID;
 
 @Entity
-@Table(name = "application_update")
+@Table(name = "application_update_topo")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

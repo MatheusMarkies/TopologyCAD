@@ -1841,7 +1841,7 @@ public class DashboardView extends Page {
         lblMode.setRotate(-90);
 
         btnTable = new CustomButton("Tabela", new Image(CAD.class.getResource("/mspm/icons/data.png").toString()), "", btnImageSize);
-        btnContour = new CustomButton("Curvas", new Image(CAD.class.getResource("/mspm/icons/contour.png").toString()), "", btnImageSize);
+        btnContour = new CustomButton("Gerar Curvas", new Image(CAD.class.getResource("/mspm/icons/contour.png").toString()), "", btnImageSize);
         btnDivideArea = new CustomButton("Div. Área", new Image(CAD.class.getResource("/mspm/icons/divided.png").toString()), "", btnImageSize);
         btnConfrontante = new CustomButton("Confront.", new Image(CAD.class.getResource("/mspm/icons/neighborhood.png").toString()), "", btnImageSize);
         btnInsertSheet = new CustomButton("Folha", new Image(CAD.class.getResource("/mspm/icons/document.png").toString()), "", btnImageSize);
