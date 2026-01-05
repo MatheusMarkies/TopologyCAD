@@ -109,6 +109,14 @@ public class DashboardView extends Page {
     private Label lblInfoX;
     private Label lblInfoY;
     private Label lblInfoZ;
+    private boolean isMap10XMode = false;
+
+    private Label lblToolTip;
+    private StackPane tipsContainer;
+
+    Color colorDefault = Color.TRANSPARENT;
+    Color colorHover = Color.TRANSPARENT;
+    Color colorActive = Color.web("#0078D7");
 
     public DashboardView(ApplicationWindow applicationWindow, NetworkManager networkManager) {
         super(applicationWindow, networkManager, "/mspm/pages/DashboardCSS.css");
@@ -153,9 +161,12 @@ public class DashboardView extends Page {
 
         cadCanvas = new CadCanvas(functions);
         createInfoOverlay();
+        createTipsOverlay();
 
+        canvasContainer.getChildren().addAll(cadCanvas, infoOverlay, tipsContainer);
 
-        canvasContainer.getChildren().addAll(cadCanvas, infoOverlay);
+        tipsContainer.layoutXProperty().bind(canvasContainer.widthProperty().subtract(tipsContainer.widthProperty()).divide(2));
+        tipsContainer.layoutYProperty().bind(canvasContainer.heightProperty().subtract(tipsContainer.heightProperty()));
 
         cadCanvas.widthProperty().bind(canvasContainer.widthProperty());
         cadCanvas.heightProperty().bind(canvasContainer.heightProperty());
@@ -238,7 +249,6 @@ public class DashboardView extends Page {
     }
 
     private void setupShortcuts() {
-        // Garante que o painel receba eventos de teclado
         this.setFocusTraversable(true);
 
         this.setOnKeyPressed(e -> {
@@ -253,6 +263,16 @@ public class DashboardView extends Page {
                 }
                 case T -> {
                     editSelectedText();
+                }
+
+                case F -> {
+                    if (isMap10XMode) {
+                        switchToolBar("MAIN");
+                        System.out.println("Modo: CAD Principal");
+                    } else {
+                        switchToolBar("MAP10X");
+                        System.out.println("Modo: Mapa 10X");
+                    }
                 }
             }
         });
@@ -289,29 +309,71 @@ public class DashboardView extends Page {
     }
 
     private void deselectAllButtons() {
-        btnLine.setActive(false);
-        btnPolyline.setActive(false);
-        btnUIText.setActive(false);
+        // Ferramentas de Visualização
+        if (btnPan != null) btnPan.setActive(false);
+
+        // Ferramentas de Desenho (CAD)
+        if (btnLine != null) btnLine.setActive(false);
+        if (btnPolyline != null) btnPolyline.setActive(false);
+        if (btnUIText != null) btnUIText.setActive(false);
+
+        // Ferramentas de Medição
+        if (btnDimArea != null) btnDimArea.setActive(false);
+        if (btnDimSegments != null) btnDimSegments.setActive(false);
+        if (btnDimAngle != null) btnDimAngle.setActive(false);
+
+        // Ferramentas Mapa 10X
+        if (btnTable != null) btnTable.setActive(false);
+        if (btnConfrontante != null) btnConfrontante.setActive(false);
+        if (btnInsertSheet != null) btnInsertSheet.setActive(false);
+        if (btnConfigVertices != null) btnConfigVertices.setActive(false);
+
+        // Ferramentas de Ação que podem ter ficado visivelmente ativas
+        if (btnDivideArea != null) btnDivideArea.setActive(false);
+
+        updateToolTip("");
     }
 
-    Color colorDefault = Color.TRANSPARENT;
-    Color colorHover = Color.TRANSPARENT;
-    Color colorActive = Color.web("#0078D7");
+    private String getTipForFunction(HandleFunctions.FunctionType type) {
+        return switch (type) {
+            case LINE -> "Clique no ponto inicial e depois no ponto final.";
+            case POLYLINE -> "Clique para adicionar pontos. (Feche no início ou clique duplo para terminar)";
+            case TEXT -> "Clique no local desejado para inserir o texto.";
+            case PLACE_TABLE -> "Clique na tela para posicionar a tabela.";
+            case DIMENSION_AREA -> "Clique dentro ou na borda de um polígono fechado.";
+            case DIMENSION_SEGMENTS -> "Clique em uma linha ou segmento para cotar.";
+            case DIMENSION_ANGLE -> "Clique no Vértice, depois no Ponto 1 e Ponto 2.";
+            case DEFINE_CONFRONTANTE -> "Clique no Ponto A e depois no Ponto B do limite.";
+            case PLACE_SHEET -> "Posicione a folha e clique para confirmar.";
+            case CONFIG_VERTICES -> "Clique exatamente sobre um vértice para configurar.";
+            case EDGEPAN -> "Arraste a tela para mover a visualização.";
+            case MOVE_OBJECT -> "Clique no ponto base e arraste para mover o objeto.";
+            default -> "";
+        };
+    }
 
     private void selectTool(CustomButton selectedBtn, HandleFunctions.FunctionType type) {
         if (selectedBtn.isActive()) {
             selectedBtn.setActive(false);
             functions.setFunction(HandleFunctions.FunctionType.NONE);
-        }
 
-        else {
+            updateToolTip(""); // <--- LIMPA A DICA
+
+            // Reseta cursor se necessário
+            if (cadCanvas.getScene() != null) cadCanvas.getScene().setCursor(Cursor.DEFAULT);
+        } else {
+            // Desativa outros botões (lógica existente...)
             btnLine.setActive(false);
             btnPolyline.setActive(false);
             btnUIText.setActive(false);
             btnPan.setActive(false);
+            // (Adicione os outros botões do Mapa10X aqui se necessário desativar todos globalmente)
+            // ...
 
             selectedBtn.setActive(true);
             functions.setFunction(type);
+
+            updateToolTip(getTipForFunction(type)); // <--- MOSTRA A DICA
         }
     }
 
@@ -541,9 +603,18 @@ public class DashboardView extends Page {
 
         ToolBar newBar;
         switch (type) {
-            case "MAP10X" -> newBar = createMap10XToolBar();
-            case "MAIN" -> newBar = createMainToolBar(); // Sua antiga createCommandBar
-            default -> newBar = createMainToolBar();
+            case "MAP10X" -> {
+                newBar = createMap10XToolBar();
+                isMap10XMode = true; // Sincroniza estado
+            }
+            case "MAIN" -> {
+                newBar = createMainToolBar();
+                isMap10XMode = false; // Sincroniza estado
+            }
+            default -> {
+                newBar = createMainToolBar();
+                isMap10XMode = false;
+            }
         }
 
         topContainer.getChildren().add(newBar);
@@ -720,69 +791,6 @@ public class DashboardView extends Page {
             projectData.setPlantaLocalizacao(img);
             if (propertiesSidebar != null) propertiesSidebar.refreshData();
         }
-    }
-
-    private ToolBar createMap10XToolBar() {
-        ToolBar toolBar = new ToolBar();
-
-        double height = 45.0;
-        toolBar.setPrefHeight(height);
-        toolBar.setMinHeight(height);
-        toolBar.setMaxHeight(height);
-
-        toolBar.setPadding(new javafx.geometry.Insets(5, 10, 5, 10));
-        toolBar.setStyle("-fx-base: #2b2b2b; -fx-background-color: #2b2b2b;");
-
-        int btnImageSize = 18;
-        Label lblMode = new Label("MAPA 10X");
-        lblMode.setTextFill(Color.web("#888888"));
-        lblMode.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
-
-        CustomButton btnMapPan = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/move.png").toString()),
-                "",
-                btnImageSize
-        );
-        btnMapPan.setAnimation(colorDefault, colorHover, colorActive, 200, true);
-        btnMapPan.setOnMouseClicked(e -> {
-            btnMapPan.setActive(true);
-            functions.setFunction(HandleFunctions.FunctionType.EDGEPAN);
-            functions.setEdgePanEnabled(true);
-        });
-        btnMapPan.setActive(true);
-        functions.setFunction(HandleFunctions.FunctionType.EDGEPAN);
-
-        // Botão Zoom Extents
-        CustomButton btnMapZoom = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/zoom-in.png").toString()),
-                "",
-                btnImageSize
-        );
-        btnMapZoom.setOnMouseClicked(e -> getCadCanvas().zoomExtents());
-
-        CustomButton btnLayers = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/table-grid.png").toString()),
-                "",
-                btnImageSize
-        );
-        btnLayers.setAnimation(colorDefault, colorHover, colorActive, 200, true);
-        btnLayers.setOnMouseClicked(e -> {
-            System.out.println("Abrir gerenciador de camadas do Mapa 10X...");
-            btnLayers.setActive(!btnLayers.isActive());
-        });
-
-        // --- 3. ADICIONA TUDO NA BARRA ---
-        toolBar.getItems().addAll(
-                lblMode,
-                new Separator(Orientation.VERTICAL),
-                btnMapPan,
-                btnMapZoom,
-                new Separator(Orientation.VERTICAL),
-                btnLayers
-                // Adicione mais ferramentas específicas do Mapa 10X aqui
-        );
-
-        return toolBar;
     }
 
     // 1. Substitua o método handleSelectionUpdate por esta versão mais inteligente
@@ -1022,6 +1030,7 @@ public class DashboardView extends Page {
             btnConfigVertices.setActive(false);
             functions.setFunction(HandleFunctions.FunctionType.NONE);
             functions.setOnActionFinished(null);
+            updateToolTip("");
         });
     }
 
@@ -1438,6 +1447,7 @@ public class DashboardView extends Page {
 
             btnTable.setActive(false);
             System.out.println("Tabela inserida com " + finalPoints.size() + " pontos.");
+            updateToolTip("");
         });
     }
 
@@ -1577,16 +1587,67 @@ public class DashboardView extends Page {
             // Callback de desligamento
             functions.setOnActionFinished(() -> {
                 btnInsertSheet.setActive(false);
+                updateToolTip("");
             });
 
             System.out.println("Posicione a folha " + pair.getKey() + " na tela.");
         });
     }
 
+    private void createTipsOverlay() {
+        lblToolTip = new Label("");
+        lblToolTip.setTextFill(Color.WHITE);
+        lblToolTip.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
+        lblToolTip.setPadding(new Insets(8, 15, 8, 15));
+
+        lblToolTip.setStyle(
+                "-fx-background-color: rgba(0, 0, 0, 0.7);" +
+                        "-fx-background-radius: 20;" +
+                        "-fx-border-radius: 20;" +
+                        "-fx-border-color: rgba(255, 255, 255, 0.3);" +
+                        "-fx-border-width: 1;"
+        );
+
+        tipsContainer = new StackPane(lblToolTip);
+        tipsContainer.setMouseTransparent(true); // Deixa o clique passar para o canvas
+        tipsContainer.setPadding(new Insets(0, 0, 20, 0)); // Margem inferior
+
+        // Inicialmente invisível
+        tipsContainer.setVisible(false);
+    }
+
+    private void updateToolTip(String text) {
+        if (text == null || text.isEmpty()) {
+            tipsContainer.setVisible(false);
+        } else {
+            lblToolTip.setText(text);
+            tipsContainer.setVisible(true);
+            tipsContainer.toFront();
+        }
+    }
+
+    private VBox createSection(String title, javafx.scene.Node... nodes) {
+        HBox buttonsBox = new HBox(5);
+        buttonsBox.setAlignment(javafx.geometry.Pos.CENTER);
+        buttonsBox.getChildren().addAll(nodes);
+
+        Label lblTitle = new Label(title);
+        lblTitle.setTextFill(Color.web("#888888"));
+        lblTitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 9));
+
+        lblTitle.setPadding(new Insets(2, 0, 4, 0));
+
+        VBox sectionBox = new VBox();
+        sectionBox.setAlignment(javafx.geometry.Pos.CENTER);
+        sectionBox.getChildren().addAll(buttonsBox, lblTitle);
+
+        return sectionBox;
+    }
+
     private ToolBar createMainToolBar() {
         ToolBar toolBar = new ToolBar();
 
-        double height = 45.0;
+        double height = 70.0;
         toolBar.setPrefHeight(height);
         toolBar.setMinHeight(height);
         toolBar.setMaxHeight(height);
@@ -1599,12 +1660,21 @@ public class DashboardView extends Page {
 
         int btnImageSize = 18;
 
-        // --- BOTÃO IMPORTAR ---
-        btnImport = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/import.png").toString()),
-                "",//
-                btnImageSize
-        );
+        // --- CAD GERAL ---
+        btnImport = new CustomButton("Importar", new Image(CAD.class.getResource("/mspm/icons/import.png").toString()), "", btnImageSize);
+        btnSave = new CustomButton("Salvar", new Image(CAD.class.getResource("/mspm/icons/save.png").toString()), "", btnImageSize);
+        btnPan = new CustomButton("Pan", new Image(CAD.class.getResource("/mspm/icons/move.png").toString()), "", btnImageSize);
+        btnZoomExtents = new CustomButton("Zoom Ext.", new Image(CAD.class.getResource("/mspm/icons/zoom-in.png").toString()), "", btnImageSize);
+        btnToggleGrid = new CustomButton("Grade", new Image(CAD.class.getResource("/mspm/icons/pixels.png").toString()), "", btnImageSize);
+        btnLayers = new CustomButton("Camadas", new Image(CAD.class.getResource("/mspm/icons/layers.png").toString()), "", btnImageSize);
+        btnLine = new CustomButton("Linha", new Image(CAD.class.getResource("/mspm/icons/nodes.png").toString()), "", btnImageSize);
+        btnPolyline = new CustomButton("Polilinha", new Image(CAD.class.getResource("/mspm/icons/polyline.png").toString()), "", btnImageSize);
+        btnJoin = new CustomButton("Unir", new Image(CAD.class.getResource("/mspm/icons/broken-link.png").toString()), "", btnImageSize);
+        btnUIText = new CustomButton("Texto", new Image(CAD.class.getResource("/mspm/icons/text.png").toString()), "", btnImageSize);
+        btnShowCoordinatesTable = new CustomButton("Painel Lat.", new Image(CAD.class.getResource("/mspm/icons/table-grid.png").toString()), "", btnImageSize);
+        btnDimArea = new CustomButton("Área", new Image(CAD.class.getResource("/mspm/icons/area.png").toString()), "", btnImageSize);
+        btnDimSegments = new CustomButton("Distância", new Image(CAD.class.getResource("/mspm/icons/measure.png").toString()), "", btnImageSize);
+        btnDimAngle = new CustomButton("Ângulo", new Image(CAD.class.getResource("/mspm/icons/angle.png").toString()), "", btnImageSize);
 
         btnImport.setAnimation(colorDefault, colorHover, colorActive, 200, false);
         btnImport.setOnMouseClicked(new EventHandler<MouseEvent>() {
@@ -1621,13 +1691,6 @@ public class DashboardView extends Page {
             }
         });
 
-        // --- BOTÃO SALVAR ---
-        btnSave = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/save.png").toString()),
-                "",
-                btnImageSize
-        );
-
         btnSave.setAnimation(colorDefault, colorHover, colorActive, 200, false);
         btnSave.setOnMouseClicked(new EventHandler<MouseEvent>() {
             @Override
@@ -1635,13 +1698,6 @@ public class DashboardView extends Page {
                 saveProject();
             }
         });
-
-        // --- BOTÃO ZOOM EXTENTS ---
-        btnZoomExtents = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/zoom-in.png").toString()),
-                "",
-                btnImageSize
-        );
 
         btnZoomExtents.setAnimation(colorDefault, colorHover, colorActive, 200, false);
         btnZoomExtents.setOnMouseClicked(new EventHandler<MouseEvent>() {
@@ -1651,66 +1707,33 @@ public class DashboardView extends Page {
             }
         });
 
-        // --- BOTÃO PAN (Este é Toggle = true) ---
-        btnPan = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/move.png").toString()),
-                "",
-                btnImageSize
-        );
         btnPan.setAnimation(colorDefault, colorHover, colorActive, 200, true);
         btnPan.setOnMouseClicked(e -> {
             selectTool(btnPan, HandleFunctions.FunctionType.EDGEPAN);
             functions.setEdgePanEnabled(!functions.isEdgePanEnabled());
         });
 
-        // --- FERRAMENTAS DE DESENHO (São Toggle = true) ---
-
-        btnLine = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/nodes.png").toString()),
-                "",
-                btnImageSize
-        );
         btnLine.setAnimation(colorDefault, colorHover, colorActive, 200, true);
         btnLine.setOnMouseClicked(e -> {
             selectTool(btnLine, HandleFunctions.FunctionType.LINE);
         });
 
-        btnPolyline = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/polyline.png").toString()),
-                "",
-                btnImageSize
-        );
         btnPolyline.setAnimation(colorDefault, colorHover, colorActive, 200, true);
         btnPolyline.setOnMouseClicked(e -> {
             selectTool(btnPolyline, HandleFunctions.FunctionType.POLYLINE);
         });
 
-        btnJoin = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/broken-link.png").toString()), // Ícone sugerido: nodes ou algo que lembre união
-                "",
-                btnImageSize
-        );
         btnJoin.setAnimation(colorDefault, colorHover, colorActive, 200, false); // False = Click único, não toggle
         btnJoin.setOnMouseClicked(e -> {
             handleJoinObjects();
         });
 
-        btnUIText = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/text.png").toString()),
-                "",
-                btnImageSize
-        );
         btnUIText.setAnimation(colorDefault, colorHover, colorActive, 200, true);
         btnUIText.setOnMouseClicked(e -> {
             selectTool(btnUIText, HandleFunctions.FunctionType.TEXT);
         });
 
-        // --- BOTÃO TABELA ---
-        btnShowCoordinatesTable = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/table-grid.png").toString()),
-                "",
-                btnImageSize
-        );
+
         btnShowCoordinatesTable.setAnimation(colorDefault, colorHover, colorActive, 200, true);
         btnShowCoordinatesTable.setOnMouseClicked(e -> {
             toggleTable();
@@ -1718,44 +1741,12 @@ public class DashboardView extends Page {
         });
         btnShowCoordinatesTable.setActive(true);
 
-        btnTable = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/data.png").toString()), // Use um ícone apropriado
-                "",
-                btnImageSize
-        );
-        btnTable.setAnimation(colorDefault, colorHover, colorActive, 200, false);
-
-        btnTable.setOnMouseClicked(e -> {
-            handleAddTable();
-        });
-
-        btnLayers = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/layers.png").toString()),
-                "",
-                btnImageSize
-        );
         btnLayers.setAnimation(colorDefault, colorHover, colorActive, 200, true);
 
         btnLayers.setOnMouseClicked(e -> {
             handleShowLayers();
         });
 
-        btnContour = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/contour.png").toString()),
-                "",
-                btnImageSize
-        );
-        btnContour.setAnimation(colorDefault, colorHover, colorActive, 200, false);
-
-        btnContour.setOnMouseClicked(e -> {
-            handleCreateContourCurves();
-            });
-
-        btnToggleGrid = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/pixels.png").toString()),
-                "",
-                btnImageSize
-        );
         btnToggleGrid.setAnimation(colorDefault, colorHover, colorActive, 200, true);
         btnToggleGrid.setActive(true);
 
@@ -1763,11 +1754,6 @@ public class DashboardView extends Page {
             handleShowGrid();
         });
 
-        btnDimArea = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/area.png").toString()),
-                "",
-                btnImageSize
-        );
         btnDimArea.setAnimation(colorDefault, colorHover, colorActive, 200, true);
         btnDimArea.setOnMouseClicked(e -> {
             selectTool(btnDimArea, HandleFunctions.FunctionType.DIMENSION_AREA);
@@ -1777,16 +1763,12 @@ public class DashboardView extends Page {
                 btnDimArea.setActive(false);
                 functions.setFunction(HandleFunctions.FunctionType.NONE);
                 System.out.println("Ferramenta Área finalizada.");
+                updateToolTip("");
             });
 
             System.out.println("Ferramenta Cotar Área Selecionada. Clique na borda de um polígono.");
         });
 
-        btnDimSegments = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/measure.png").toString()),
-                "",
-                btnImageSize
-        );
         btnDimSegments.setAnimation(colorDefault, colorHover, colorActive, 200, true);
         btnDimSegments.setOnMouseClicked(e -> {
             selectTool(btnDimSegments, HandleFunctions.FunctionType.DIMENSION_SEGMENTS);
@@ -1796,16 +1778,12 @@ public class DashboardView extends Page {
                 btnDimSegments.setActive(false);
                 functions.setFunction(HandleFunctions.FunctionType.NONE);
                 System.out.println("Ferramenta Segmentos finalizada.");
+                updateToolTip("");
             });
 
             System.out.println("Ferramenta Cotar Segmentos Selecionada. Clique em uma linha/polígono.");
         });
 
-        btnDimAngle = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/angle.png").toString()),
-                "",
-                btnImageSize
-        );
         btnDimAngle.setAnimation(colorDefault, colorHover, colorActive, 200, true);
         btnDimAngle.setOnMouseClicked(e -> {
             selectTool(btnDimAngle, HandleFunctions.FunctionType.DIMENSION_ANGLE);
@@ -1815,6 +1793,7 @@ public class DashboardView extends Page {
                 btnDimAngle.setActive(false);
                 functions.setFunction(HandleFunctions.FunctionType.NONE);
                 System.out.println("Ferramenta Ângulo finalizada.");
+                updateToolTip("");
             });
 
             // Reseta variáveis de estado
@@ -1824,23 +1803,68 @@ public class DashboardView extends Page {
             System.out.println("Ferramenta Ângulo: Clique num vértice (Auto) ou no Vazio (Manual).");
         });
 
-        btnDivideArea = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/divided.png").toString()),
-                "",
-                btnImageSize
-        );
         btnDimAngle.setAnimation(colorDefault, colorHover, colorActive, 200, true);
+
+        toolBar.getItems().addAll(
+                createSection("ARQUIVO", btnImport, btnSave),
+                new Separator(Orientation.VERTICAL),
+
+                createSection("EXIBIR", btnPan, btnZoomExtents, btnToggleGrid, btnLayers, btnShowCoordinatesTable),
+                new Separator(Orientation.VERTICAL),
+
+                createSection("DESENHO", btnLine, btnPolyline, btnJoin, btnUIText),
+                new Separator(Orientation.VERTICAL),
+
+                createSection("MEDIÇÃO", btnDimArea, btnDimSegments, btnDimAngle)
+        );
+
+        return toolBar;
+    }
+
+    private ToolBar createMap10XToolBar() {
+        ToolBar toolBar = new ToolBar();
+
+        double height = 70.0; // Altura maior para ícone + texto
+        toolBar.setPrefHeight(height);
+        toolBar.setMinHeight(height);
+        toolBar.setMaxHeight(height);
+
+        int btnImageSize = 18;
+
+        toolBar.setPadding(new javafx.geometry.Insets(5, 10, 5, 10));
+
+        toolBar.setStyle("-fx-base: #2b2b2b; -fx-background-color: #2b2b2b;");
+
+        Label lblMode = new Label("MAPA 10X");
+        lblMode.setTextFill(Color.web("#888888"));
+        lblMode.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
+        lblMode.setRotate(-90);
+
+        btnTable = new CustomButton("Tabela", new Image(CAD.class.getResource("/mspm/icons/data.png").toString()), "", btnImageSize);
+        btnContour = new CustomButton("Curvas", new Image(CAD.class.getResource("/mspm/icons/contour.png").toString()), "", btnImageSize);
+        btnDivideArea = new CustomButton("Div. Área", new Image(CAD.class.getResource("/mspm/icons/divided.png").toString()), "", btnImageSize);
+        btnConfrontante = new CustomButton("Confront.", new Image(CAD.class.getResource("/mspm/icons/neighborhood.png").toString()), "", btnImageSize);
+        btnInsertSheet = new CustomButton("Folha", new Image(CAD.class.getResource("/mspm/icons/document.png").toString()), "", btnImageSize);
+        btnConfigVertices = new CustomButton("Ren. Vértices", new Image(CAD.class.getResource("/mspm/icons/refresh.png").toString()), "", btnImageSize);
+        btnMemorial = new CustomButton("Memorial", new Image(CAD.class.getResource("/mspm/icons/google-docs.png").toString()), "", btnImageSize);
+        btnExportMap = new CustomButton("Exportar", new Image(CAD.class.getResource("/mspm/icons/share.png").toString()), "", btnImageSize);
+
+        btnTable.setAnimation(colorDefault, colorHover, colorActive, 200, false);
+        btnTable.setOnMouseClicked(e -> {
+            handleAddTable();
+        });
+
+        btnContour.setAnimation(colorDefault, colorHover, colorActive, 200, false);
+        btnContour.setOnMouseClicked(e -> {
+            handleCreateContourCurves();
+        });
+
+        btnDivideArea.setAnimation(colorDefault, colorHover, colorActive, 200, false);
         btnDivideArea.setOnMouseClicked(e -> {
             handleDivideArea();
         });
 
-        btnConfrontante = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/neighborhood.png").toString()),
-                "",
-                btnImageSize
-        );
         btnConfrontante.setAnimation(colorDefault, colorHover, colorActive, 200, true);
-
         btnConfrontante.setOnMouseClicked(e -> {
             selectTool(btnConfrontante, HandleFunctions.FunctionType.DEFINE_CONFRONTANTE);
             functions.setTempStartPoint(null);
@@ -1867,69 +1891,37 @@ public class DashboardView extends Page {
                 functions.setOnActionFinished(null);
 
                 System.out.println("Ferramenta Confrontante finalizada.");
+                updateToolTip("");
             });
 
             System.out.println("Ferramenta Confrontante: Clique no Ponto A e depois no Ponto B.");
         });
 
-        btnInsertSheet = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/document.png").toString()),
-                "",
-                btnImageSize
-        );
         btnInsertSheet.setAnimation(colorDefault, colorHover, colorActive, 200, false);
         btnInsertSheet.setOnMouseClicked(e -> handleInsertSheet());
 
-        btnConfigVertices = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/refresh.png").toString()), // Ícone de ciclo/refresh
-                "",
-                btnImageSize
-        );
         btnConfigVertices.setAnimation(colorDefault, colorHover, colorActive, 200, false);
         btnConfigVertices.setOnMouseClicked(e -> handleConfigVertices());
 
-        btnMemorial = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/document.png").toString()),
-                "Gerar Memorial",
-                btnImageSize
-        );
         btnMemorial.setAnimation(colorDefault, colorHover, colorActive, 200, false);
         btnMemorial.setOnMouseClicked(e -> handleExportMemorial());
 
-        btnExportMap = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/share.png").toString()),
-                "Exportar DXF",
-                btnImageSize
-        );
         btnExportMap.setAnimation(colorDefault, colorHover, colorActive, 200, false);
         btnExportMap.setOnMouseClicked(e -> handleExportMap());
 
         toolBar.getItems().addAll(
-                btnImport, btnSave,
+                lblMode,
+                new Separator(Orientation.VERTICAL),
+
+                createSection("LEVANTAMENTO", btnConfigVertices, btnConfrontante, btnTable),
 
                 new Separator(Orientation.VERTICAL),
-                btnPan, btnZoomExtents,
+
+                createSection("CÁLCULOS", btnDivideArea, btnContour),
 
                 new Separator(Orientation.VERTICAL),
-                btnLine, btnPolyline, btnJoin, btnUIText,
 
-                new Separator(Orientation.VERTICAL),
-                btnShowCoordinatesTable, btnTable,
-
-                new Separator(Orientation.VERTICAL),
-                btnLayers, btnToggleGrid,
-
-                new Separator(Orientation.VERTICAL),
-                btnContour,
-
-                new Separator(Orientation.VERTICAL),
-                btnDimArea, btnDimSegments, btnDimAngle,
-
-                new Separator(Orientation.VERTICAL),
-                btnDivideArea, btnConfrontante,
-
-                new Separator(Orientation.VERTICAL),
-                btnInsertSheet, btnConfigVertices, btnMemorial, btnExportMap
+                createSection("PROJETO", btnInsertSheet, btnMemorial, btnExportMap)
         );
 
         return toolBar;

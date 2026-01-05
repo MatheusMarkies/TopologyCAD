@@ -1,21 +1,16 @@
 package com.brasens.layout.components;
 
-import javafx.animation.Interpolator;
-import javafx.animation.KeyFrame;
-import javafx.animation.KeyValue;
-import javafx.animation.ScaleTransition;
-import javafx.animation.Timeline;
+import javafx.animation.*;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.geometry.Pos;
-import javafx.scene.CacheHint;
 import javafx.scene.Cursor;
 import javafx.scene.control.Label;
 import javafx.scene.effect.DropShadow;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
-import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
@@ -28,7 +23,8 @@ public class CustomButton extends StackPane {
 
     private ImageView buttonLabelImageView = new ImageView();
     private Label buttonLabel = new Label();
-    private HBox contentBox = new HBox();
+
+    private VBox contentBox = new VBox();
 
     private final ObjectProperty<Color> backgroundColor = new SimpleObjectProperty<>();
     private Timeline colorAnimation;
@@ -55,20 +51,22 @@ public class CustomButton extends StackPane {
 
         buttonLabel = new Label(text);
         buttonLabel.setTextFill(Color.WHITE);
-        buttonLabel.setFont(Font.font("Segoe UI", FontWeight.SEMI_BOLD, 12));
+        buttonLabel.setFont(Font.font("Segoe UI", FontWeight.NORMAL, 10));
 
         contentBox.getChildren().addAll(buttonLabelImageView);
+
+
         if (!text.isEmpty()) {
             contentBox.getChildren().add(buttonLabel);
-            contentBox.setSpacing(10);
+            contentBox.setSpacing(3); // Espaçamento menor entre ícone e texto
         }
         contentBox.setAlignment(Pos.CENTER);
 
         this.getChildren().add(contentBox);
         this.setAlignment(Pos.CENTER);
 
-        this.setMinWidth(40);
-        this.setMinHeight(40);
+        this.setMinWidth(50);
+        this.setMinHeight(55);
         this.setCursor(Cursor.HAND);
 
         // Sombra suave
