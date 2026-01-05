@@ -1,18 +1,29 @@
 package com.brasens.model;
 
-import lombok.Getter;
-import lombok.Setter;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
-@Getter @Setter
+import java.util.UUID;
+
+@Entity
+@Table(name = "application_update")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class Update {
-    String version = "";
-    String URL = "";
 
-    @Override
-    public String toString() {
-        return "Update{" +
-                "version='" + version + '\'' +
-                ", URL='" + URL + '\'' +
-                '}';
-    }
+    @Id
+    @Column(columnDefinition = "UUID")
+    private UUID id;
+
+    @Column(name = "app_version", length = 50)
+    private String version;
+
+    @Column(name = "download_url", length = 1024)
+    private String URL;
 }

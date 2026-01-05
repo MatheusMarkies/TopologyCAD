@@ -1,11 +1,11 @@
 package com.brasens;
 
-import atlantafx.base.theme.*;
+import atlantafx.base.theme.PrimerLight;
 import com.brasens.layout.ApplicationWindow;
+import com.brasens.layout.DownloadPopup;
 import com.brasens.layout.LayoutSizeManager;
-import com.brasens.layout.UpdatePopup;
 import com.brasens.layout.controller.fxml.ActionStatusPopUp;
-import com.brasens.model.Update;
+import com.brasens.utilities.FileDownload;
 import com.brasens.utilities.common.FilesManager;
 import javafx.animation.PauseTransition;
 import javafx.application.Application;
@@ -20,16 +20,32 @@ import javafx.stage.StageStyle;
 import javafx.util.Duration;
 import lombok.Getter;
 import lombok.Setter;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.context.ConfigurableApplicationContext;
 
 import java.io.IOException;
 
 import static com.brasens.Config.APP_VERSION;
-import static javafx.application.Application.launch;
 
-@Getter @Setter
+@Getter
+@Setter
+@SpringBootApplication
 public class CAD extends Application {
     private Scene scene;
     private Stage stage;
+
+    private ConfigurableApplicationContext springContext;
+    private ApplicationWindow rootLayout;
+
+    @Override
+    public void init() throws Exception {
+        springContext = new SpringApplicationBuilder(CAD.class)
+                .headless(false)
+                .run(getParameters().getRaw().toArray(new String[0]));
+
+        rootLayout = springContext.getBean(ApplicationWindow.class);
+    }
 
     @Override
     public void start(Stage stage) {
@@ -122,9 +138,10 @@ public class CAD extends Application {
 
     }
 
-    public static void openUpdatePopUp(Update update) {
+    public static void openDownloadPopUp(FileDownload file) {
         try {
-            var root = new UpdatePopup(update);
+            Stage stage = new Stage();
+            var root = new DownloadPopup(file, stage);
             var antialiasing = Platform.isSupported(ConditionalFeature.EFFECT)
                     ? SceneAntialiasing.BALANCED
                     : SceneAntialiasing.DISABLED;
@@ -133,23 +150,18 @@ public class CAD extends Application {
 
             Application.setUserAgentStylesheet(new PrimerLight().getUserAgentStylesheet());
 
-            scene.getStylesheets().add(CAD.class.getResource("/mspm/pages/DashboardCSS.css").toString());
-
-            Stage stage = new Stage();
+            scene.getStylesheets().add(CAD.class.getResource("/mspm/pages/PopupCSS.css").toString());
+            stage.initStyle(StageStyle.DECORATED);
             stage.setResizable(false);
 
             stage.setHeight(LayoutSizeManager.getResizedHeight(600));
             stage.setWidth(LayoutSizeManager.getResizedWidth(450));
 
             stage.setScene(scene);
-            stage.initStyle(StageStyle.UTILITY);
-            stage.setTitle("Nova versão disponivel");
 
-            stage.show();
+            stage.setTitle("Download");
 
-            //PauseTransition delay = new PauseTransition(Duration.seconds(2));
-            //delay.setOnFinished( event -> stage.close() );
-            //delay.play();
+            stage.showAndWait();
         } catch (Exception e) {
             printNicerStackTrace(e);
         }

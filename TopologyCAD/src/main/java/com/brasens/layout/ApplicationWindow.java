@@ -1,14 +1,24 @@
 package com.brasens.layout;
 
-import com.brasens.NetworkManager;
 import com.brasens.CAD;
+import com.brasens.Config;
+import com.brasens.NetworkManager;
+import com.brasens.model.Update;
+import com.brasens.repository.UpdateRepository;
+import com.brasens.utilities.FileDownload;
+import com.brasens.utilities.common.FilesManager;
 import com.brasens.utils.NodeUtils;
 import com.brasens.utils.Page;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.scene.layout.*;
+import javafx.scene.layout.AnchorPane;
+import javafx.scene.layout.BorderPane;
 import lombok.Getter;
 import lombok.Setter;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 /**
  * This class, ApplicationWindow, represents the main plan of a graphical interface.
@@ -40,11 +50,15 @@ import lombok.Setter;
  *
  */
 
+@Component
 @Getter @Setter
 public class ApplicationWindow extends AnchorPane {
 
     // Main class
     CAD CAD;
+
+    @Autowired
+    private UpdateRepository updateRepository;
 
     // Constants for interface body identification and minimum width
     public static final String BODY_ID = "body";
@@ -58,7 +72,7 @@ public class ApplicationWindow extends AnchorPane {
 
     // Manager instances for network and visualization
     public void init(){
-
+        tryUpdate();
     }
 
     // Class constructor
@@ -117,6 +131,28 @@ public class ApplicationWindow extends AnchorPane {
         // Adds BorderPane as a child of AnchorPane (main window)
         getChildren().addAll(borderPane);
     }
+
+    public void tryUpdate() {
+        Update appUpdate = new Update();
+        List<Update> updateList = updateRepository.findAll();
+
+        if (!updateList.isEmpty())
+            appUpdate = updateRepository.findAll().get(0);
+
+        System.out.println("Config.APP_VERSION: " + Config.APP_VERSION);
+        System.out.println("appUpdate.APP_VERSION: " + appUpdate.getVersion());
+
+        if (!appUpdate.getVersion().equals(Config.APP_VERSION)) {
+            FileDownload fileDownload = new FileDownload("TopologyCAD.exe", FilesManager.ApplicationDataFolder + "\\update", appUpdate.getURL());
+            System.out.println("Open Update Popup!");
+            try {
+                CAD.openDownloadPopUp(fileDownload);
+            } catch (Exception e) {
+                CAD.printNicerStackTrace(e);
+            }
+        }
+    }
+
 /*
     // Method called after login
     public void realiseLogin(){
