@@ -16,6 +16,7 @@ import com.brasens.model.io.ProjectSaveState;
 import com.brasens.model.objects.TopoObject;
 import com.brasens.model.objects.TopoPoint;
 import com.brasens.model.report.ProjectData;
+import com.brasens.utilities.common.SheetManager;
 import com.brasens.utilities.math.ContourGenerator;
 import com.brasens.utilities.math.CoordinateConversion;
 import com.brasens.utilities.math.ScaleCalculator;
@@ -38,6 +39,7 @@ import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 import javafx.scene.text.Text;
 import javafx.stage.FileChooser;
+import javafx.util.Pair;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -74,6 +76,13 @@ public class DashboardView extends Page {
     private CustomButton btnDimAngle;
 
     private CustomButton btnDivideArea;
+
+    private CustomButton btnConfrontante;
+
+    private CustomButton btnInsertSheet;
+    private CustomButton btnConfigVertices;
+
+    private CustomButton btnMemorial;
 
     BorderPane layout = new BorderPane();
 
@@ -145,7 +154,12 @@ public class DashboardView extends Page {
         canvasContainer.widthProperty().addListener(o -> cadCanvas.redraw());
         canvasContainer.heightProperty().addListener(o -> cadCanvas.redraw());
 
-        cadCanvas.setOnSelectionChanged(this::handleSelectionUpdate);
+        cadCanvas.setOnSelectionChanged(point -> {
+            handleSelectionUpdate(point);
+        });
+        cadCanvas.setOnContentChange(() -> {
+            handleSelectionUpdate(null);
+        });
 
         layout.setCenter(canvasContainer);
 
@@ -226,8 +240,7 @@ public class DashboardView extends Page {
                 }
                 case DELETE -> {
                     cadCanvas.deleteSelected();
-
-                    updateCoordinatesTable(cadCanvas.getAllPoints());
+                    updateCoordinatesTable(cadCanvas.getSurveyPoints());
                 }
                 case T -> {
                     editSelectedText();
@@ -763,43 +776,74 @@ public class DashboardView extends Page {
         return toolBar;
     }
 
-    private void handleSelectionUpdate(TopoPoint point) {
-        // Atualiza o overlay flutuante (comportamento antigo)
-        if (point == null) {
-            infoOverlay.setVisible(false);
+    // 1. Substitua o método handleSelectionUpdate por esta versão mais inteligente
+    private void handleSelectionUpdate(TopoPoint interactionPoint) {
+        // A. Atualiza o Overlay Flutuante (Info visual do mouse)
+        if (interactionPoint == null) {
+            // Só esconde se não tiver nada selecionado visualmente
+            if (cadCanvas.getAllPoints().stream().noneMatch(TopoPoint::isSelected)) {
+                infoOverlay.setVisible(false);
+            }
         } else {
-            updateInfoOverlay(point);
+            updateInfoOverlay(interactionPoint);
             infoOverlay.setVisible(true);
         }
 
-        // Nova Lógica: Tenta encontrar um objeto selecionado para atualizar as métricas
-        TopoObject selectedObj = null;
-        int selectedCount = 0;
+        // B. Coleta os pontos para a Tabela e Resumo
+        List<TopoPoint> pointsToShow = new ArrayList<>();
 
-        // Varre os objetos para ver qual está "selecionado" (pelo menos 1 ponto selecionado)
+        // Verifica se existe ALGUM ponto selecionado no desenho (ignorando Folhas)
+        boolean hasSelection = false;
+        TopoObject singleSelectedPoly = null;
+        int selectedObjectsCount = 0;
+
         for (TopoObject obj : cadCanvas.getObjects()) {
-            boolean isObjSelected = false;
-            if (!obj.getPoints().isEmpty()) {
-                // Se o primeiro ponto estiver selecionado, assumimos que o objeto está em foco
-                // (Melhoria futura: verificar se todos estão selecionados)
-                if (obj.getPoints().get(0).isSelected()) {
-                    isObjSelected = true;
+            // Ignora camadas de sistema
+            if (obj.getLayerName() != null && obj.getLayerName().startsWith("FOLHA")) continue;
+            if (obj.getLayerName() != null && obj.getLayerName().equals("GRID")) continue;
+
+            // Verifica quantos pontos deste objeto estão selecionados
+            List<TopoPoint> objSelectedPoints = new ArrayList<>();
+            for (TopoPoint p : obj.getPoints()) {
+                if (p.isSelected()) {
+                    objSelectedPoints.add(p);
+                    hasSelection = true;
                 }
             }
 
-            if (isObjSelected && obj.isClosed()) {
-                selectedObj = obj;
-                selectedCount++;
+            // Se tiver pontos selecionados, adiciona à lista de exibição
+            if (!objSelectedPoints.isEmpty()) {
+                // Se o objeto inteiro estiver selecionado (ou quase), preservamos a ordem do objeto
+                // Isso garante que o cálculo de Área funcione corretamente
+                if (objSelectedPoints.size() == obj.getPoints().size()) {
+                    pointsToShow.addAll(obj.getPoints());
+                    if (obj.isClosed()) {
+                        singleSelectedPoly = obj;
+                        selectedObjectsCount++;
+                    }
+                } else {
+                    // Seleção parcial: adiciona apenas os pontos selecionados
+                    pointsToShow.addAll(objSelectedPoints);
+                }
             }
         }
 
-        if (selectedCount == 1 && selectedObj != null) {
-            updateCoordinatesTable(selectedObj.getPoints());
-        }
-        else if (selectedCount == 0) {
-            if (point == null) {
-                updateCoordinatesTable(new ArrayList<>());
+        // C. Atualiza a Tabela e o Resumo (Área/Perímetro)
+        if (hasSelection) {
+            // MODO SELEÇÃO: Mostra apenas o que o usuário escolheu
+
+            // Prioridade: Se exatamente 1 polígono fechado estiver selecionado,
+            // garantimos que a tabela mostre a ordem correta dele para fechar o cálculo de área.
+            if (selectedObjectsCount == 1 && singleSelectedPoly != null) {
+                updateCoordinatesTable(singleSelectedPoly.getPoints());
+            } else {
+                // Seleção mista ou parcial: Mostra a lista acumulada
+                // (O cálculo de área pode dar zero se não fechar, o que é correto)
+                updateCoordinatesTable(pointsToShow);
             }
+        } else {
+            // MODO PADRÃO: Nada selecionado -> Mostra TUDO (Exceto folhas)
+            updateCoordinatesTable(cadCanvas.getSurveyPoints());
         }
     }
 
@@ -868,6 +912,110 @@ public class DashboardView extends Page {
         });
     }
 
+    private void handleConfigVertices() {
+        selectTool(btnConfigVertices, HandleFunctions.FunctionType.CONFIG_VERTICES);
+
+        functions.setOnActionFinished(() -> {
+            TopoObject obj = functions.getTempObject();
+            int clickedIndex = functions.getTempIndex(); // Este será o novo Ponto 0
+
+            if (obj != null) {
+                // --- CRIA O DIÁLOGO CUSTOMIZADO ---
+                Dialog<ButtonType> dialog = new Dialog<>();
+                dialog.setTitle("Configurar Vértices");
+                dialog.setHeaderText("Configuração de Poligonal");
+
+                ButtonType btnApply = new ButtonType("Aplicar", ButtonBar.ButtonData.OK_DONE);
+                dialog.getDialogPane().getButtonTypes().addAll(btnApply, ButtonType.CANCEL);
+
+                GridPane grid = new GridPane();
+                grid.setHgap(10);
+                grid.setVgap(10);
+                grid.setPadding(new Insets(20, 150, 10, 10));
+
+                // 1. Opções de Geometria
+                CheckBox chkSetStart = new CheckBox("Definir este vértice como Início (Ponto 1)");
+                chkSetStart.setSelected(true);
+
+                CheckBox chkReverse = new CheckBox("Inverter Sentido (Horário <-> Anti-horário)");
+
+                // 2. Opções de Renomeação
+                CheckBox chkRename = new CheckBox("Renomear Pontos em Massa");
+                chkRename.setSelected(true); // Padrão selecionado
+
+                TextField txtPrefix = new TextField("PT");
+                txtPrefix.setPromptText("Prefixo");
+
+                TextField txtSeparator = new TextField("-");
+                txtSeparator.setPromptText("Separador");
+
+                TextField txtStartNum = new TextField("01");
+
+                // Layout
+                grid.add(new Label("Geometria:"), 0, 0);
+                grid.add(chkSetStart, 0, 1, 2, 1);
+                grid.add(chkReverse, 0, 2, 2, 1);
+
+                grid.add(new Separator(), 0, 3, 2, 1);
+
+                grid.add(new Label("Renomeação:"), 0, 4);
+                grid.add(chkRename, 0, 5, 2, 1);
+
+                grid.add(new Label("Prefixo:"), 0, 6);
+                grid.add(txtPrefix, 1, 6);
+
+                grid.add(new Label("Separador:"), 0, 7);
+                grid.add(txtSeparator, 1, 7);
+
+                grid.add(new Label("Início:"), 0, 8);
+                grid.add(txtStartNum, 1, 8);
+
+                // Habilita/Desabilita campos de texto baseado no checkbox
+                txtPrefix.disableProperty().bind(chkRename.selectedProperty().not());
+                txtSeparator.disableProperty().bind(chkRename.selectedProperty().not());
+                txtStartNum.disableProperty().bind(chkRename.selectedProperty().not());
+
+                dialog.getDialogPane().setContent(grid);
+
+                Optional<ButtonType> result = dialog.showAndWait();
+
+                if (result.isPresent() && result.get() == btnApply) {
+                    if (chkSetStart.isSelected()) {
+                        obj.setStartPointIndex(clickedIndex);
+                        System.out.println("Novo ponto inicial definido no índice antigo: " + clickedIndex);
+                    }
+
+                    if (chkReverse.isSelected()) {
+                        obj.reverseDirection();
+                        System.out.println("Sentido invertido.");
+                    }
+
+                    // 3. Renomeia
+                    if (chkRename.isSelected()) {
+                        String prefix = txtPrefix.getText();
+                        String sep = txtSeparator.getText();
+                        int startN = 1;
+                        try {
+                            startN = Integer.parseInt(txtStartNum.getText());
+                        } catch(Exception ex){}
+
+                        obj.batchRename(prefix, sep, startN);
+                        System.out.println("Pontos renomeados.");
+                    }
+
+                    // Atualiza Canvas e Tabela
+                    cadCanvas.redraw();
+                    updateCoordinatesTable(obj.getPoints());
+                }
+            }
+
+            // Desativa botão
+            btnConfigVertices.setActive(false);
+            functions.setFunction(HandleFunctions.FunctionType.NONE);
+            functions.setOnActionFinished(null);
+        });
+    }
+
     public void handleImportPointsFile() {
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("Importar Pontos Topográficos");
@@ -921,7 +1069,7 @@ public class DashboardView extends Page {
                         return;
                     }
 
-                    updateCoordinatesTable(cadCanvas.getAllPoints());
+                    updateCoordinatesTable(cadCanvas.getSurveyPoints());
                     cadCanvas.zoomExtents();
                     cadCanvas.redraw();
                 }
@@ -929,6 +1077,82 @@ public class DashboardView extends Page {
             } catch (Exception ex) {
                 ex.printStackTrace();
                 showAlert("Erro na Importação", ex.getMessage());
+            }
+        }
+    }
+
+    private void handleExportMemorial() {
+        // 1. Identifica o polígono alvo
+        // Tenta pegar o selecionado. Se não houver seleção, avisa.
+        TopoObject targetPoly = null;
+        int count = 0;
+
+        for(TopoObject obj : cadCanvas.getObjects()) {
+            // Ignora folhas e grids
+            if(obj.getLayerName().startsWith("FOLHA") || obj.getLayerName().equals("GRID")) continue;
+
+            if (obj.isClosed()) {
+                // Se tiver seleção, prioriza
+                if (!obj.getPoints().isEmpty() && obj.getPoints().get(0).isSelected()) {
+                    targetPoly = obj;
+                    count++;
+                }
+            }
+        }
+
+        if (targetPoly == null) {
+            // Tenta pegar o único polígono fechado da cena se houver só um
+            List<TopoObject> allPolys = cadCanvas.getObjects().stream()
+                    .filter(TopoObject::isClosed)
+                    .filter(o -> !o.getLayerName().startsWith("FOLHA"))
+                    .toList();
+
+            if (allPolys.size() == 1) targetPoly = allPolys.get(0);
+        }
+
+        if (targetPoly == null) {
+            showAlert("Seleção Necessária", "Selecione o polígono (gleba) para gerar o memorial.");
+            return;
+        }
+
+        // 2. Abre FileChooser
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Salvar Memorial Descritivo");
+
+        // Adiciona Filtros
+        FileChooser.ExtensionFilter extFilterDoc = new FileChooser.ExtensionFilter("Documento Word (*.doc)", "*.doc");
+        FileChooser.ExtensionFilter extFilterPdf = new FileChooser.ExtensionFilter("Documento PDF (*.pdf)", "*.pdf");
+        fileChooser.getExtensionFilters().addAll(extFilterDoc, extFilterPdf);
+
+        // Nome padrão
+        fileChooser.setInitialFileName("Memorial_" + projectData.getPropertyInfo().getNomePropriedade());
+
+        File file = fileChooser.showSaveDialog(null);
+
+        if (file != null) {
+            String path = file.getAbsolutePath().toLowerCase();
+
+            try {
+                if (path.endsWith(".pdf")) {
+                    // GERA PDF
+                    com.brasens.model.report.PdfMemorialGenerator.generateAndSave(targetPoly, projectData, file);
+                } else {
+                    // GERA DOC (Texto) - Garante extensão se usuário não digitou
+                    if (!path.endsWith(".doc") && !path.endsWith(".txt")) {
+                        file = new File(file.getAbsolutePath() + ".doc");
+                    }
+                    com.brasens.model.report.MemorialGenerator.generateAndSave(targetPoly, projectData, file);
+                }
+
+                Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                alert.setTitle("Sucesso");
+                alert.setHeaderText(null);
+                alert.setContentText("Memorial salvo com sucesso!");
+                alert.showAndWait();
+
+            } catch (Exception e) {
+                e.printStackTrace(); // Útil para debug
+                showAlert("Erro", "Falha ao salvar o arquivo: " + e.getMessage());
             }
         }
     }
@@ -1191,6 +1415,63 @@ public class DashboardView extends Page {
         btnToggleGrid.setActive(newState);
     }
 
+    private void handleInsertSheet() {
+        // Diálogo de Configuração
+        Dialog<Pair<SheetManager.SheetFormat, Double>> dialog = new Dialog<>();
+        dialog.setTitle("Inserir Folha");
+        dialog.setHeaderText("Configuração de Prancha");
+
+        ButtonType okButtonType = new ButtonType("Inserir", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().addAll(okButtonType, ButtonType.CANCEL);
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(20, 150, 10, 10));
+
+        ComboBox<com.brasens.utilities.common.SheetManager.SheetFormat> cboFormat = new ComboBox<>();
+        cboFormat.getItems().addAll(com.brasens.utilities.common.SheetManager.SheetFormat.values());
+        cboFormat.getSelectionModel().select(com.brasens.utilities.common.SheetManager.SheetFormat.A1); // Padrão
+
+        TextField txtScale = new TextField("1000"); // Padrão 1:1000
+
+        grid.add(new Label("Formato:"), 0, 0);
+        grid.add(cboFormat, 1, 0);
+        grid.add(new Label("Escala (1:):"), 0, 1);
+        grid.add(txtScale, 1, 1);
+
+        dialog.getDialogPane().setContent(grid);
+
+        dialog.setResultConverter(dialogButton -> {
+            if (dialogButton == okButtonType) {
+                try {
+                    double s = Double.parseDouble(txtScale.getText());
+                    return new Pair<>(cboFormat.getValue(), s);
+                } catch (Exception e) {
+                    return null;
+                }
+            }
+            return null;
+        });
+
+        Optional<Pair<com.brasens.utilities.common.SheetManager.SheetFormat, Double>> result = dialog.showAndWait();
+
+        result.ifPresent(pair -> {
+            // Configura a função para o Canvas desenhar o Ghost
+            functions.setTempSheetFormat(pair.getKey());
+            functions.setTempSheetScale(pair.getValue());
+
+            selectTool(btnInsertSheet, HandleFunctions.FunctionType.PLACE_SHEET);
+
+            // Callback de desligamento
+            functions.setOnActionFinished(() -> {
+                btnInsertSheet.setActive(false);
+            });
+
+            System.out.println("Posicione a folha " + pair.getKey() + " na tela.");
+        });
+    }
+
     private ToolBar createMainToolBar() {
         ToolBar toolBar = new ToolBar();
 
@@ -1442,6 +1723,68 @@ public class DashboardView extends Page {
             handleDivideArea();
         });
 
+        btnConfrontante = new CustomButton("",
+                new Image(CAD.class.getResource("/mspm/icons/neighborhood.png").toString()),
+                "",
+                btnImageSize
+        );
+        btnConfrontante.setAnimation(colorDefault, colorHover, colorActive, 200, true);
+
+        btnConfrontante.setOnMouseClicked(e -> {
+            selectTool(btnConfrontante, HandleFunctions.FunctionType.DEFINE_CONFRONTANTE);
+            functions.setTempStartPoint(null);
+            functions.setOnActionFinished(() -> {
+                TopoObject obj = functions.getTempObject();
+                int idx = functions.getTempIndex();
+
+                if (obj != null) {
+                    TextInputDialog dialog = new TextInputDialog(obj.getConfrontante(idx));
+                    dialog.setTitle("Confrontante");
+                    dialog.setHeaderText("Definir vizinho para este segmento");
+                    dialog.setContentText("Nome do Confrontante:");
+
+                    java.util.Optional<String> result = dialog.showAndWait();
+                    result.ifPresent(nome -> {
+                        obj.setConfrontante(idx, nome);
+                        System.out.println("Confrontante '" + nome + "' definido para o segmento " + idx);
+                        cadCanvas.redraw();
+                    });
+                }
+
+                btnConfrontante.setActive(false);
+                functions.setFunction(HandleFunctions.FunctionType.NONE);
+                functions.setOnActionFinished(null);
+
+                System.out.println("Ferramenta Confrontante finalizada.");
+            });
+
+            System.out.println("Ferramenta Confrontante: Clique no Ponto A e depois no Ponto B.");
+        });
+
+        btnInsertSheet = new CustomButton("",
+                new Image(CAD.class.getResource("/mspm/icons/document.png").toString()),
+                "",
+                btnImageSize
+        );
+        btnInsertSheet.setAnimation(colorDefault, colorHover, colorActive, 200, false);
+        btnInsertSheet.setOnMouseClicked(e -> handleInsertSheet());
+
+        btnConfigVertices = new CustomButton("",
+                new Image(CAD.class.getResource("/mspm/icons/refresh.png").toString()), // Ícone de ciclo/refresh
+                "",
+                btnImageSize
+        );
+        btnConfigVertices.setAnimation(colorDefault, colorHover, colorActive, 200, false);
+        btnConfigVertices.setOnMouseClicked(e -> handleConfigVertices());
+
+        btnMemorial = new CustomButton("",
+                new Image(CAD.class.getResource("/mspm/icons/export.png").toString()), // Ou outro ícone de texto
+                "",
+                btnImageSize
+        );
+        btnMemorial.setAnimation(colorDefault, colorHover, colorActive, 200, false);
+        btnMemorial.setOnMouseClicked(e -> handleExportMemorial());
+
         toolBar.getItems().addAll(
                 btnImport, btnSave,
 
@@ -1464,7 +1807,10 @@ public class DashboardView extends Page {
                 btnDimArea, btnDimSegments, btnDimAngle,
 
                 new Separator(Orientation.VERTICAL),
-                btnDivideArea
+                btnDivideArea, btnConfrontante,
+
+                new Separator(Orientation.VERTICAL),
+                btnInsertSheet, btnConfigVertices, btnMemorial
         );
 
         return toolBar;

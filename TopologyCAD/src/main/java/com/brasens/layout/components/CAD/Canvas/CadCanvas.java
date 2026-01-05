@@ -85,14 +85,16 @@ public class CadCanvas extends Canvas {
         this.setOnMouseMoved(e -> {
             functions.updateMousePosition(e.getX(), e.getY());
             functions.handleMouseMove(new Vector2D(e.getX(), e.getY()), this);
+            HandleFunctions.FunctionType type = functions.getFunctionSelected();
 
-            // CORREÇÃO: Força o redesenho se estiver na ferramenta de Ângulo para a linha seguir o mouse
-            if (functions.getFunctionSelected() == HandleFunctions.FunctionType.DIMENSION_ANGLE) {
+            if (type == HandleFunctions.FunctionType.DIMENSION_ANGLE ||      // Ângulo
+                    type == HandleFunctions.FunctionType.DEFINE_CONFRONTANTE ||  // Linha elástica do Vizinho
+                    type == HandleFunctions.FunctionType.PLACE_SHEET) {          // Ghost da Folha
+
                 redraw();
             }
         });
 
-        // ... (Resto do construtor: layerVisibility, compassImage, AnimationTimer...)
         layerVisibility.put("DEFAULT", true);
         layerVisibility.put("TEXT", true);
         layerVisibility.put("CURVA_MESTRA", true);
@@ -538,6 +540,92 @@ public class CadCanvas extends Canvas {
             gc.setLineDashes(null);
         }
 
+        if (functions.getFunctionSelected() == HandleFunctions.FunctionType.PLACE_SHEET
+                && functions.getTempSheetFormat() != null) {
+
+            Vector2D mousePos = screenToWorld(functions.getCurrentMouseX(), functions.getCurrentMouseY());
+
+            double factor = functions.getTempSheetScale() / 1000.0;
+            double w = functions.getTempSheetFormat().getWidthMm() * factor;
+            double h = functions.getTempSheetFormat().getHeightMm() * factor;
+
+            double sx = mousePos.x() - globalOffsetX;
+            double sy = -(mousePos.y() - globalOffsetY);
+
+            gc.setStroke(Color.WHITE);
+            gc.setLineWidth(1.0 / scale);
+            gc.setLineDashes(5.0 / scale);
+
+            double x1 = sx;
+            double y1 = sy;
+            double x2 = sx + w;
+            double y2 = sy - h;
+
+            gc.strokeRect(x1, y2, w, h); // x, y(top-left), w, h
+
+            gc.fillText("Folha " + functions.getTempSheetFormat().name() + " (1:" + (int)functions.getTempSheetScale() + ")", x1, y2 - 10/scale);
+
+            gc.setLineDashes(null);
+        }
+
+        // --- PREVIEW: FERRAMENTA DEFINIR CONFRONTANTE ---
+        if (functions.getFunctionSelected() == HandleFunctions.FunctionType.DEFINE_CONFRONTANTE) {
+            // Desenha linha elástica se o primeiro ponto já foi definido
+            if (functions.getTempStartPoint() != null) {
+                gc.setStroke(Color.MAGENTA);
+                gc.setLineWidth(1.5 / scale);
+                gc.setLineDashes(5.0 / scale); // Tracejado
+
+                TopoPoint start = functions.getTempStartPoint();
+                // Pega posição atual do mouse (com Snap se possível, senão livre)
+                TopoPoint snapPos = findPointNear(functions.getCurrentMouseX(), functions.getCurrentMouseY(), 15.0);
+                Vector2D mousePos = (snapPos != null)
+                        ? new Vector2D(snapPos.getX(), snapPos.getY())
+                        : screenToWorld(functions.getCurrentMouseX(), functions.getCurrentMouseY());
+
+                double sx = start.getX() - globalOffsetX;
+                double sy = -(start.getY() - globalOffsetY);
+                double ex = mousePos.x() - globalOffsetX;
+                double ey = -(mousePos.y() - globalOffsetY);
+
+                gc.strokeLine(sx, sy, ex, ey);
+                gc.setLineDashes(null);
+            }
+        }
+
+        // --- DESENHAR NOMES DOS CONFRONTANTES (RENDERIZAÇÃO) ---
+        // Adicione isso para ver os nomes que já foram salvos
+        gc.setFill(Color.YELLOW);
+        gc.setFont(javafx.scene.text.Font.font("Arial", FontWeight.BOLD, 10 / scale));
+
+        for (TopoObject obj : objects) {
+            if (obj.getConfrontantes().isEmpty()) continue;
+
+            List<TopoPoint> pts = obj.getPoints();
+            int n = pts.size();
+            for (Map.Entry<Integer, String> entry : obj.getConfrontantes().entrySet()) {
+                int idx = entry.getKey();
+                String nome = entry.getValue();
+
+                if (idx < n) {
+                    TopoPoint p1 = pts.get(idx);
+                    TopoPoint p2 = pts.get((idx + 1) % n);
+
+                    // Ponto médio
+                    double midX = (p1.getX() + p2.getX()) / 2.0;
+                    double midY = (p1.getY() + p2.getY()) / 2.0;
+
+                    // Desenha o texto um pouco deslocado para fora (simplificado)
+                    // (Para um deslocamento perfeito precisaríamos da normal do vetor,
+                    // mas desenhar no meio já ajuda a visualizar)
+                    double drawX = midX - globalOffsetX;
+                    double drawY = -(midY - globalOffsetY);
+
+                    gc.fillText(nome, drawX, drawY);
+                }
+            }
+        }
+
         // =================================================================
         // LOOP 2: PONTOS E TEXTOS (RENDERIZADOS POR CIMA DAS LINHAS)
         // =================================================================
@@ -818,6 +906,114 @@ public class CadCanvas extends Canvas {
 
         textObj.addPoint(p);
         this.objects.add(textObj);
+    }
+
+    public List<TopoPoint> getSurveyPoints() {
+        List<TopoPoint> surveyPoints = new ArrayList<>();
+
+        for (TopoObject obj : objects) {
+            // Filtro: Ignora camada FOLHA
+            if (obj.getLayerName() != null && obj.getLayerName().startsWith("FOLHA")) {
+                continue;
+            }
+
+            if ("TEXT".equals(obj.getLayerName())) continue;
+
+            surveyPoints.addAll(obj.getPoints());
+        }
+        return surveyPoints;
+    }
+
+    public void handlePlaceSheetClick(double screenX, double screenY) {
+        Vector2D worldPos = screenToWorld(screenX, screenY);
+
+        if (functions.getTempSheetFormat() != null) {
+            // Cria os objetos reais
+            List<TopoObject> sheetObjs = com.brasens.utilities.common.SheetManager.createSheet(
+                    functions.getTempSheetFormat(),
+                    functions.getTempSheetScale(),
+                    worldPos.x(),
+                    worldPos.y()
+            );
+
+            this.objects.addAll(sheetObjs);
+            System.out.println("Folha inserida em: " + worldPos.x() + ", " + worldPos.y());
+
+            // Finaliza a ferramenta
+            functions.setFunction(HandleFunctions.FunctionType.NONE);
+            functions.setTempSheetFormat(null);
+
+            // Se houver callback (para desativar botão), chama
+            if (functions.getOnActionFinished() != null) {
+                functions.getOnActionFinished().run();
+                functions.setOnActionFinished(null);
+            }
+
+            redraw();
+        }
+    }
+
+    public void handleConfrontanteClick(double screenX, double screenY) {
+        // Tenta Snap em ponto existente (Essencial para essa ferramenta)
+        TopoPoint hitPoint = findPointNear(screenX, screenY, 15.0);
+
+        if (hitPoint == null) {
+            System.out.println("Clique próximo a um vértice para definir o limite.");
+            return;
+        }
+
+        // PASSO 1: Definir Primeiro Ponto
+        if (functions.getTempStartPoint() == null) {
+            functions.setTempStartPoint(hitPoint);
+            System.out.println("Início do limite definido. Clique no próximo ponto.");
+        }
+        // PASSO 2: Definir Segundo Ponto e Finalizar
+        else {
+            TopoPoint p1 = functions.getTempStartPoint();
+            TopoPoint p2 = hitPoint;
+
+            if (p1 == p2) return; // Ignora clique duplo no mesmo lugar
+
+            // Tenta encontrar qual objeto possui essa aresta (P1 -> P2 ou P2 -> P1)
+            TopoObject foundObj = null;
+            int startIndex = -1;
+
+            for (TopoObject obj : objects) {
+                List<TopoPoint> pts = obj.getPoints();
+                int n = pts.size();
+                for (int i = 0; i < n; i++) {
+                    TopoPoint curr = pts.get(i);
+                    // Pega o próximo (considerando fechamento se for polígono)
+                    TopoPoint next = (obj.isClosed()) ? pts.get((i + 1) % n) : (i < n-1 ? pts.get(i+1) : null);
+
+                    if (next == null) continue;
+
+                    // Verifica se o segmento clicado corresponde a este índice
+                    if ((curr == p1 && next == p2) || (curr == p2 && next == p1)) {
+                        foundObj = obj;
+                        // A chave do confrontante é sempre o índice do ponto inicial no sentido do polígono
+                        // Se achou P1->P2, index é i. Se achou P2->P1, index é i também (a aresta é a i-ésima).
+                        startIndex = i;
+                        break;
+                    }
+                }
+                if (foundObj != null) break;
+            }
+
+            if (foundObj != null && startIndex != -1) {
+                if (functions.getOnActionFinished() != null) {
+                    functions.setTempObject(foundObj);
+                    functions.setTempIndex(startIndex);
+                    functions.getOnActionFinished().run();
+                }
+            } else {
+                System.out.println("Segmento não encontrado ou pontos não são adjacentes.");
+            }
+
+            // Reseta para permitir definir outro imediatamente
+            functions.setTempStartPoint(null);
+        }
+        redraw();
     }
 
     public void handleDimensionAngleClick(double screenX, double screenY) {
@@ -1800,6 +1996,41 @@ public class CadCanvas extends Canvas {
 
         lastMouseX = e.getX();
         lastMouseY = e.getY();
+    }
+
+    public void handleConfigVertexClick(double screenX, double screenY) {
+        // Precisamos clicar EXATAMENTE num ponto (Snap rigoroso)
+        TopoPoint hitPoint = findPointNear(screenX, screenY, 15.0);
+
+        if (hitPoint == null) {
+            System.out.println("Clique exatamente sobre um vértice.");
+            return;
+        }
+
+        // Descobre a qual objeto e qual índice este ponto pertence
+        TopoObject foundObj = null;
+        int foundIndex = -1;
+
+        for (TopoObject obj : objects) {
+            // Só faz sentido para polígonos/linhas, não para tabelas ou folhas
+            if (obj.getLayerName() != null && obj.getLayerName().startsWith("FOLHA")) continue;
+
+            int idx = obj.getPoints().indexOf(hitPoint);
+            if (idx != -1) {
+                foundObj = obj;
+                foundIndex = idx;
+                break;
+            }
+        }
+
+        if (foundObj != null) {
+            // Passa para o Dashboard via callback
+            if (functions.getOnActionFinished() != null) {
+                functions.setTempObject(foundObj);
+                functions.setTempIndex(foundIndex);
+                functions.getOnActionFinished().run();
+            }
+        }
     }
 
     private void handleScroll(ScrollEvent e) {

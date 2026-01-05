@@ -33,7 +33,9 @@ public class HandleFunctions {
     private boolean edgePanEnabled = false;
 
     public enum FunctionType {
-        NONE, EDGEPAN, LINE, POLYLINE, TEXT, PLACE_TABLE, MOVE_OBJECT, DIMENSION_AREA, DIMENSION_SEGMENTS, DIMENSION_ANGLE
+        NONE, EDGEPAN, LINE, POLYLINE, TEXT, PLACE_TABLE, MOVE_OBJECT, DIMENSION_AREA,
+        DIMENSION_SEGMENTS, DIMENSION_ANGLE,
+        DEFINE_CONFRONTANTE, PLACE_SHEET, CONFIG_VERTICES
     }
 
     private FunctionType functionSelected = FunctionType.NONE;
@@ -55,6 +57,12 @@ public class HandleFunctions {
     private int angleStep = 0;
     private TopoPoint angleVertex = null;
     private TopoPoint angleP1 = null;
+
+    private TopoObject tempObject;
+    private int tempIndex;
+
+    private com.brasens.utilities.common.SheetManager.SheetFormat tempSheetFormat;
+    private double tempSheetScale;
 
     public void setFunction(FunctionType type) {
         this.functionSelected = type;
@@ -286,6 +294,15 @@ public class HandleFunctions {
             }
             case DIMENSION_ANGLE -> {
                 canvasReference.handleDimensionAngleClick(pointer.x(), pointer.y());
+            }
+            case DEFINE_CONFRONTANTE -> {
+                canvasReference.handleConfrontanteClick(pointer.x(), pointer.y());
+            }
+            case PLACE_SHEET -> {
+                canvasReference.handlePlaceSheetClick(pointer.x(), pointer.y());
+            }
+            case CONFIG_VERTICES -> {
+                canvasReference.handleConfigVertexClick(pointer.x(), pointer.y());
             }
         }
     }
