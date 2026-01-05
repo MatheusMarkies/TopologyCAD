@@ -57,6 +57,7 @@ public class DashboardView extends Page {
 
     private VBox topContainer;
 
+    /* CAD */
     private CustomButton btnImport;
     private CustomButton btnSave;
     private CustomButton btnPan;
@@ -64,16 +65,22 @@ public class DashboardView extends Page {
     private CustomButton btnPolyline;
     private CustomButton btnJoin;
     private CustomButton btnUIText;
+
+    private CustomButton btnToggleGrid;
+
     private CustomButton btnZoomExtents;
     private CustomButton btnShowCoordinatesTable;
-    private CustomButton btnTable;
     private CustomButton btnLayers;
-    private CustomButton btnContour;
-    private CustomButton btnToggleGrid;
 
     private CustomButton btnDimArea;
     private CustomButton btnDimSegments;
     private CustomButton btnDimAngle;
+    /* CAD */
+
+    /* MAPA 10 X */
+    private CustomButton btnTable;
+
+    private CustomButton btnContour;
 
     private CustomButton btnDivideArea;
 
@@ -83,6 +90,8 @@ public class DashboardView extends Page {
     private CustomButton btnConfigVertices;
 
     private CustomButton btnMemorial;
+    private CustomButton btnExportMap;
+    /* MAPA 10 X */
 
     BorderPane layout = new BorderPane();
 
@@ -1082,79 +1091,117 @@ public class DashboardView extends Page {
     }
 
     private void handleExportMemorial() {
-        // 1. Identifica o polígono alvo
-        // Tenta pegar o selecionado. Se não houver seleção, avisa.
-        TopoObject targetPoly = null;
-        int count = 0;
+        TopoObject targetPoly = findTargetPolygon(); // Método auxiliar abaixo
+        if (targetPoly == null) return;
 
-        for(TopoObject obj : cadCanvas.getObjects()) {
-            // Ignora folhas e grids
-            if(obj.getLayerName().startsWith("FOLHA") || obj.getLayerName().equals("GRID")) continue;
-
-            if (obj.isClosed()) {
-                // Se tiver seleção, prioriza
-                if (!obj.getPoints().isEmpty() && obj.getPoints().get(0).isSelected()) {
-                    targetPoly = obj;
-                    count++;
-                }
-            }
-        }
-
-        if (targetPoly == null) {
-            // Tenta pegar o único polígono fechado da cena se houver só um
-            List<TopoObject> allPolys = cadCanvas.getObjects().stream()
-                    .filter(TopoObject::isClosed)
-                    .filter(o -> !o.getLayerName().startsWith("FOLHA"))
-                    .toList();
-
-            if (allPolys.size() == 1) targetPoly = allPolys.get(0);
-        }
-
-        if (targetPoly == null) {
-            showAlert("Seleção Necessária", "Selecione o polígono (gleba) para gerar o memorial.");
-            return;
-        }
-
-        // 2. Abre FileChooser
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("Salvar Memorial Descritivo");
-
-        // Adiciona Filtros
-        FileChooser.ExtensionFilter extFilterDoc = new FileChooser.ExtensionFilter("Documento Word (*.doc)", "*.doc");
-        FileChooser.ExtensionFilter extFilterPdf = new FileChooser.ExtensionFilter("Documento PDF (*.pdf)", "*.pdf");
-        fileChooser.getExtensionFilters().addAll(extFilterDoc, extFilterPdf);
-
-        // Nome padrão
-        fileChooser.setInitialFileName("Memorial_" + projectData.getPropertyInfo().getNomePropriedade());
+        fileChooser.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("Documento PDF (*.pdf)", "*.pdf"),
+                new FileChooser.ExtensionFilter("Documento Word (*.doc)", "*.doc")
+        );
+        fileChooser.setInitialFileName("Memorial_" + (projectData.getPropertyInfo().getNomePropriedade() != null ? projectData.getPropertyInfo().getNomePropriedade() : "Gleba"));
 
         File file = fileChooser.showSaveDialog(null);
 
         if (file != null) {
             String path = file.getAbsolutePath().toLowerCase();
-
             try {
                 if (path.endsWith(".pdf")) {
-                    // GERA PDF
                     com.brasens.model.report.PdfMemorialGenerator.generateAndSave(targetPoly, projectData, file);
                 } else {
-                    // GERA DOC (Texto) - Garante extensão se usuário não digitou
-                    if (!path.endsWith(".doc") && !path.endsWith(".txt")) {
-                        file = new File(file.getAbsolutePath() + ".doc");
-                    }
+                    // Fallback para texto/doc
                     com.brasens.model.report.MemorialGenerator.generateAndSave(targetPoly, projectData, file);
                 }
-
-                Alert alert = new Alert(Alert.AlertType.INFORMATION);
-                alert.setTitle("Sucesso");
-                alert.setHeaderText(null);
-                alert.setContentText("Memorial salvo com sucesso!");
-                alert.showAndWait();
-
+                showAlert("Sucesso", "Memorial exportado com sucesso!");
             } catch (Exception e) {
-                e.printStackTrace(); // Útil para debug
-                showAlert("Erro", "Falha ao salvar o arquivo: " + e.getMessage());
+                showAlert("Erro", "Falha ao exportar: " + e.getMessage());
+                e.printStackTrace();
             }
         }
+    }
+
+    // --- EXPORTAÇÃO MAPA (DXF) ---
+    private void handleExportMap() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Exportar Mapa de Retificação");
+
+        // Define Filtros para as duas opções solicitadas
+        FileChooser.ExtensionFilter filterDxf = new FileChooser.ExtensionFilter("Arquivo DXF (CAD) (*.dxf)", "*.dxf");
+        FileChooser.ExtensionFilter filterPdf = new FileChooser.ExtensionFilter("Desenho Técnico PDF (*.pdf)", "*.pdf");
+
+        fileChooser.getExtensionFilters().addAll(filterDxf, filterPdf);
+
+        // Nome padrão
+        String defaultName = (projectData.getPropertyInfo().getNomePropriedade() != null && !projectData.getPropertyInfo().getNomePropriedade().isEmpty())
+                ? projectData.getPropertyInfo().getNomePropriedade()
+                : "Projeto";
+        fileChooser.setInitialFileName("Mapa_" + defaultName);
+
+        File file = fileChooser.showSaveDialog(null);
+
+        if (file != null) {
+            String path = file.getAbsolutePath().toLowerCase();
+            try {
+                // OPÇÃO 1: PDF (Desenho Técnico 2D com Barra Lateral)
+                if (path.endsWith(".pdf")) {
+                    // Pega todos os objetos visíveis
+                    List<TopoObject> mapObjects = cadCanvas.getObjects();
+
+                    com.brasens.model.io.PdfMapPlotter.export(mapObjects, projectData, file);
+
+                    Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                    alert.setTitle("Sucesso");
+                    alert.setHeaderText(null);
+                    alert.setContentText("Mapa PDF gerado com sucesso!\nVerifique a barra lateral e tabelas no arquivo.");
+                    alert.showAndWait();
+                }
+                // OPÇÃO 2: DXF (Apenas geometria para outros softwares)
+                else {
+                    // Garante extensão dxf se o usuário esqueceu
+                    if (!path.endsWith(".dxf")) {
+                        file = new File(file.getAbsolutePath() + ".dxf");
+                    }
+
+                    // Usa a classe DxfExport existente (ou SimpleDxfParser se for o caso, mas o DxfExport é para escrita)
+                    // Assumindo que você criou o DxfExport na etapa anterior:
+                    com.brasens.model.io.DxfExport.export(cadCanvas.getObjects(), file);
+
+                    Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                    alert.setTitle("Sucesso");
+                    alert.setHeaderText(null);
+                    alert.setContentText("Arquivo DXF exportado com sucesso!");
+                    alert.showAndWait();
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                showAlert("Erro", "Falha ao exportar mapa: " + e.getMessage());
+            }
+        }
+    }
+
+    // Auxiliar para achar qual polígono o usuário quer exportar
+    private TopoObject findTargetPolygon() {
+        // 1. Tenta o selecionado
+        for(TopoObject obj : cadCanvas.getObjects()) {
+            if (obj.isClosed() && !obj.getPoints().isEmpty() && obj.getPoints().get(0).isSelected()
+                    && !obj.getLayerName().startsWith("FOLHA")) {
+                return obj;
+            }
+        }
+        // 2. Se houver apenas 1 polígono fechado de levantamento, usa ele
+        TopoObject candidate = null;
+        int count = 0;
+        for(TopoObject obj : cadCanvas.getObjects()) {
+            if (obj.isClosed() && !obj.getLayerName().startsWith("FOLHA") && !obj.getLayerName().equals("GRID")) {
+                candidate = obj;
+                count++;
+            }
+        }
+        if (count == 1) return candidate;
+
+        showAlert("Atenção", "Selecione o polígono (gleba) que deseja gerar o memorial.");
+        return null;
     }
 
     public void handleJoinObjects() {
@@ -1302,82 +1349,152 @@ public class DashboardView extends Page {
     }
 
     public void handleAddTable() {
-        // 1. Verificação Primária: Tem algum ponto no desenho?
-        List<TopoPoint> allPoints = cadCanvas.getAllPoints();
-        if (allPoints.isEmpty()) {
-            showAlert("Aviso", "Não há pontos no desenho para gerar uma tabela.");
-            return;
-        }
 
         if (btnTable.isActive()) {
-            // Desativa se já estiver ativo
             btnTable.setActive(false);
             functions.setFunction(HandleFunctions.FunctionType.NONE);
             if (cadCanvas.getScene() != null) cadCanvas.getScene().setCursor(Cursor.DEFAULT);
             functions.setOnActionFinished(null);
+            return;
+        }
 
-        } else {
-            // 2. Pergunta ao usuário
-            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-            alert.setTitle("Inserir Tabela");
-            alert.setHeaderText("Escolha o modelo de tabela:");
+        List<TopoPoint> pointsForTable = new ArrayList<>();
+        boolean isSelectionMode = false;
 
-            // Verifica se o memorial é possível (tem perímetro calculado?)
-            boolean hasMemorialData = !coordinateTableView.getItems().isEmpty();
+        for (TopoObject obj : cadCanvas.getObjects()) {
+            if (obj.getLayerName() != null && obj.getLayerName().startsWith("FOLHA")) continue;
+            if ("GRID".equals(obj.getLayerName())) continue;
 
-            String contentText = "Pontos disponíveis: " + allPoints.size();
-            if (!hasMemorialData) {
-                contentText += "\n(Memorial indisponível: Desenhe um perímetro primeiro)";
-            }
-            alert.setContentText(contentText);
-
-            ButtonType btnSimples = new ButtonType("Coordenadas (XYZ)");
-            ButtonType btnMemorial = new ButtonType("Memorial Descritivo");
-            ButtonType btnCancelar = new ButtonType("Cancelar", ButtonBar.ButtonData.CANCEL_CLOSE);
-
-            alert.getButtonTypes().setAll(btnSimples, btnMemorial, btnCancelar);
-
-            // Desabilita o botão Memorial se não houver dados calculados
-            alert.getDialogPane().lookupButton(btnMemorial).setDisable(!hasMemorialData);
-
-            Optional<ButtonType> result = alert.showAndWait();
-
-            if (result.isEmpty() || result.get() == btnCancelar) {
-                return;
+            boolean isObjSelected = false;
+            for (TopoPoint p : obj.getPoints()) {
+                if (p.isSelected()) {
+                    isObjSelected = true;
+                    break;
+                }
             }
 
-            // 3. Configura a ferramenta
-            selectTool(btnTable, HandleFunctions.FunctionType.PLACE_TABLE);
-            if (cadCanvas.getScene() != null) {
-                cadCanvas.getScene().setCursor(javafx.scene.Cursor.CROSSHAIR);
+            if (isObjSelected) {
+                isSelectionMode = true;
+                pointsForTable.addAll(obj.getPoints());
             }
+        }
 
-            boolean isMemorial = (result.get() == btnMemorial);
+        if (!isSelectionMode) {
+            pointsForTable = cadCanvas.getSurveyPoints();
+        }
 
-            // 4. Define o que acontece ao clicar na tela
-            functions.setOnActionFinished(() -> {
-                // Pega a tabela que acabou de ser criada (vazia) no Canvas
-                int lastIdx = cadCanvas.getObjects().size() - 1;
+        if (pointsForTable.size() > 1 && pointsForTable.get(0) == pointsForTable.get(pointsForTable.size() - 1)) {
 
-                if (lastIdx >= 0 && cadCanvas.getObjects().get(lastIdx) instanceof com.brasens.model.objects.TopoTableObject) {
+        }
 
-                    com.brasens.model.objects.TopoTableObject tableObj =
-                            (com.brasens.model.objects.TopoTableObject) cadCanvas.getObjects().get(lastIdx);
+        if (pointsForTable.isEmpty()) {
+            showAlert("Aviso", "Não há pontos disponíveis para gerar a tabela.");
+            return;
+        }
 
-                    if (isMemorial) {
-                        configureMemorialTable(tableObj);
-                    } else {
-                        // RE-OBTÉM os pontos no momento do clique para garantir
-                        configureSimpleTable(tableObj);
-                    }
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.setTitle("Inserir Tabela");
 
-                    cadCanvas.redraw();
+        String modeText = isSelectionMode ? " (Baseado na Seleção)" : " (Todos os Pontos)";
+        alert.setHeaderText("Configurar Tabela" + modeText);
+        alert.setContentText("Serão listados " + pointsForTable.size() + " pontos.\nEscolha o modelo:");
+
+        ButtonType btnSimples = new ButtonType("Coordenadas (XYZ)");
+        ButtonType btnMemorial = new ButtonType("Memorial Descritivo");
+        ButtonType btnCancelar = new ButtonType("Cancelar", ButtonBar.ButtonData.CANCEL_CLOSE);
+
+        alert.getButtonTypes().setAll(btnSimples, btnMemorial, btnCancelar);
+
+        alert.getDialogPane().lookupButton(btnMemorial).setDisable(pointsForTable.size() < 2);
+
+        Optional<ButtonType> result = alert.showAndWait();
+
+        if (result.isEmpty() || result.get() == btnCancelar) return;
+
+        boolean isMemorial = (result.get() == btnMemorial);
+
+        final List<TopoPoint> finalPoints = pointsForTable;
+
+        selectTool(btnTable, HandleFunctions.FunctionType.PLACE_TABLE);
+        if (cadCanvas.getScene() != null) {
+            cadCanvas.getScene().setCursor(Cursor.CROSSHAIR);
+        }
+
+        functions.setOnActionFinished(() -> {
+            int lastIdx = cadCanvas.getObjects().size() - 1;
+
+            if (lastIdx >= 0 && cadCanvas.getObjects().get(lastIdx) instanceof com.brasens.model.objects.TopoTableObject) {
+                com.brasens.model.objects.TopoTableObject tableObj =
+                        (com.brasens.model.objects.TopoTableObject) cadCanvas.getObjects().get(lastIdx);
+
+                if (isMemorial) {
+                    configureMemorialTable(tableObj, finalPoints);
+                } else {
+                    configureSimpleTable(tableObj, finalPoints);
                 }
 
-                btnTable.setActive(false);
-                System.out.println("Tabela inserida com sucesso.");
-            });
+                cadCanvas.redraw();
+            }
+
+            btnTable.setActive(false);
+            System.out.println("Tabela inserida com " + finalPoints.size() + " pontos.");
+        });
+    }
+
+    private void configureSimpleTable(com.brasens.model.objects.TopoTableObject table, List<TopoPoint> points) {
+        table.updateDataFromPoints(points);
+    }
+
+    private void configureMemorialTable(com.brasens.model.objects.TopoTableObject table, List<TopoPoint> points) {
+        String[] headers = {"VÉRTICE", "AZIMUTE", "DISTÂNCIA", "COORD. ESTE (X)", "COORD. NORTE (Y)", "CONFRONTANTE"};
+        List<String[]> rows = new ArrayList<>();
+
+        int n = points.size();
+
+        boolean isClosedLoop = (n > 2 && isLoop(points));
+        int iterations = isClosedLoop ? n : n - 1;
+
+        for (int i = 0; i < iterations; i++) {
+            TopoPoint current = points.get(i);
+            TopoPoint next = points.get((i + 1) % n);
+
+            // Cálculos usando a biblioteca matemática
+            double dist = TopologyMath.getDistance2D(current, next);
+            double az = TopologyMath.getAzimuth(current, next);
+            String azStr = TopologyMath.degreesToDMS(az);
+
+            String[] row = new String[6];
+            row[0] = current.getName();                                    // Vértice
+            row[1] = azStr;                                                // Azimute
+            row[2] = String.format("%.2f", dist);                          // Distância
+            row[3] = String.format("%.3f", current.getX());                // X
+            row[4] = String.format("%.3f", current.getY());                // Y
+
+            row[5] = " - ";
+
+            rows.add(row);
         }
+
+        if (!isClosedLoop && n > 0) {
+            TopoPoint last = points.get(n - 1);
+            String[] row = new String[] {
+                    last.getName(), "-", "-",
+                    String.format("%.3f", last.getX()),
+                    String.format("%.3f", last.getY()),
+                    "-"
+            };
+            rows.add(row);
+        }
+
+        table.setCustomData(headers, rows);
+        table.setColWidth(25.0);
+    }
+
+    private boolean isLoop(List<TopoPoint> pts) {
+        if(pts.size() < 3) return false;
+        TopoPoint first = pts.get(0);
+        TopoPoint last = pts.get(pts.size()-1);
+        return Math.hypot(first.getX()-last.getX(), first.getY()-last.getY()) < 0.01;
     }
 
     private void configureMemorialTable(com.brasens.model.objects.TopoTableObject table) {
@@ -1400,12 +1517,6 @@ public class DashboardView extends Page {
 
         table.setCustomData(headers, rows);
         table.setColWidth(25.0); // Colunas um pouco mais largas para caber Azimute
-    }
-
-    private void configureSimpleTable(com.brasens.model.objects.TopoTableObject table) {
-        // Pega os dados mais recentes do Canvas
-        List<TopoPoint> points = cadCanvas.getAllPoints();
-        table.updateDataFromPoints(points);
     }
 
     public void handleShowGrid(){
@@ -1778,12 +1889,20 @@ public class DashboardView extends Page {
         btnConfigVertices.setOnMouseClicked(e -> handleConfigVertices());
 
         btnMemorial = new CustomButton("",
-                new Image(CAD.class.getResource("/mspm/icons/export.png").toString()), // Ou outro ícone de texto
-                "",
+                new Image(CAD.class.getResource("/mspm/icons/document.png").toString()),
+                "Gerar Memorial",
                 btnImageSize
         );
         btnMemorial.setAnimation(colorDefault, colorHover, colorActive, 200, false);
         btnMemorial.setOnMouseClicked(e -> handleExportMemorial());
+
+        btnExportMap = new CustomButton("",
+                new Image(CAD.class.getResource("/mspm/icons/share.png").toString()),
+                "Exportar DXF",
+                btnImageSize
+        );
+        btnExportMap.setAnimation(colorDefault, colorHover, colorActive, 200, false);
+        btnExportMap.setOnMouseClicked(e -> handleExportMap());
 
         toolBar.getItems().addAll(
                 btnImport, btnSave,
@@ -1810,7 +1929,7 @@ public class DashboardView extends Page {
                 btnDivideArea, btnConfrontante,
 
                 new Separator(Orientation.VERTICAL),
-                btnInsertSheet, btnConfigVertices, btnMemorial
+                btnInsertSheet, btnConfigVertices, btnMemorial, btnExportMap
         );
 
         return toolBar;
